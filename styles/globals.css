@@ -1,0 +1,58 @@
+@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-inter: "Inter", sans-serif;
+  --font-arabic: "IBM Plex Sans Arabic", sans-serif;
+}
+
+body {
+  background-color: #f8f9ff;
+  color: #0b1c30;
+}
+
+/* RTL uses the Arabic font stack; increase line-height per the design system. */
+html[dir="rtl"] body {
+  line-height: 1.65;
+}
+
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: "liga";
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.glass-nav {
+  backdrop-filter: blur(12px);
+  background-color: rgba(248, 249, 255, 0.8);
+}
+
+.hero-gradient {
+  background: radial-gradient(circle at top right, #dae2fd 0%, #f8f9ff 100%);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #d3e4fe;
+  border-radius: 10px;
+}

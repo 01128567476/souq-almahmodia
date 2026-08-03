@@ -1,0 +1,365 @@
+/**
+ * Validation helpers for API route inputs.
+ *
+ * These functions parse and validate request data BEFORE it reaches business
+ * logic.  They throw `ValidationError` with a descriptive message on failure,
+ * so API routes can catch and return a clean 400 response.
+ *
+ * Future: replace manual checks with Zod schemas.  These pure functions are
+ * a drop-in replacement — swap the implementations, keep the signatures.
+ */
+
+/* -------------------------------------------------------------------------- */
+/* Error                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** Thrown when request input fails validation. */
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shared validators                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Validate that a string is present and within the maximum length.
+ * Returns the trimmed value, or throws.
+ */
+export function requireString(
+  value: unknown,
+  fieldName: string,
+  maxLength?: number,
+): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ValidationError(`${fieldName} is required and must be a non-empty string`);
+  }
+  const trimmed = value.trim();
+  if (maxLength && trimmed.length > maxLength) {
+    throw new ValidationError(`${fieldName} must not exceed ${maxLength} characters`);
+  }
+  return trimmed;
+}
+
+/**
+ * Validate an optional string field. Returns the trimmed value or undefined.
+ */
+export function optionalString(
+  value: unknown,
+  fieldName: string,
+  maxLength?: number,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new ValidationError(`${fieldName} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (maxLength && trimmed.length > maxLength) {
+    throw new ValidationError(`${fieldName} must not exceed ${maxLength} characters`);
+  }
+  return trimmed;
+}
+
+/**
+ * Validate a numeric field.
+ */
+export function requireNumber(
+  value: unknown,
+  fieldName: string,
+  options?: { min?: number; max?: number },
+): number {
+  const num = Number(value);
+  if (typeof value !== "number" || isNaN(num)) {
+    throw new ValidationError(`${fieldName} must be a number`);
+  }
+  if (options?.min !== undefined && num < options.min) {
+    throw new ValidationError(`${fieldName} must be at least ${options.min}`);
+  }
+  if (options?.max !== undefined && num > options.max) {
+    throw new ValidationError(`${fieldName} must be at most ${options.max}`);
+  }
+  return num;
+}
+
+/**
+ * Validate an optional numeric field.
+ */
+export function optionalNumber(
+  value: unknown,
+  fieldName: string,
+  options?: { min?: number; max?: number },
+): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireNumber(value, fieldName, options);
+}
+
+/**
+ * Validate an integer.
+ */
+export function requireInteger(
+  value: unknown,
+  fieldName: string,
+  options?: { min?: number; max?: number },
+): number {
+  const num = requireNumber(value, fieldName, options);
+  if (!Number.isInteger(num)) {
+    throw new ValidationError(`${fieldName} must be an integer`);
+  }
+  return num;
+}
+
+/**
+ * Validate an optional integer.
+ */
+export function optionalInteger(
+  value: unknown,
+  fieldName: string,
+  options?: { min?: number; max?: number },
+): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const num = requireInteger(value, fieldName, options);
+  return num;
+}
+
+/**
+ * Validate a boolean field (accepts boolean or string "true"/"false").
+ */
+export function requireBoolean(
+  value: unknown,
+  fieldName: string,
+): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value.toLowerCase() === "true") return true;
+    if (value.toLowerCase() === "false") return false;
+  }
+  throw new ValidationError(`${fieldName} must be a boolean`);
+}
+
+/**
+ * Validate an optional boolean.
+ */
+export function optionalBoolean(
+  value: unknown,
+  fieldName: string,
+): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireBoolean(value, fieldName);
+}
+
+/**
+ * Validate that a value is one of the allowed options.
+ */
+export function requireEnum<T extends string>(
+  value: unknown,
+  fieldName: string,
+  allowed: T[],
+): T {
+  if (!allowed.includes(value as T)) {
+    throw new ValidationError(`${fieldName} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as T;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Domain-specific validators                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Validate an ID string.  Must be a non-empty string (max 64 chars).
+ */
+export function validateId(value: unknown, fieldName = "ID"): string {
+  return requireString(value, fieldName, 64);
+}
+
+/**
+ * Validate a title.  Must be 1–200 characters.
+ */
+export function validateTitle(value: unknown): string {
+  return requireString(value, "Title", 200);
+}
+
+/**
+ * Validate a description.  Must be 0–10000 characters.
+ */
+export function validateDescription(value: unknown): string | undefined {
+  return optionalString(value, "Description", 10000);
+}
+
+/**
+ * Validate a price.  Must be a positive number (max 999999999).
+ */
+export function validatePrice(value: unknown): number {
+  return requireNumber(value, "Price", { min: 0, max: 999999999 });
+}
+
+/**
+ * Validate a currency code.  Must be a 3-letter ISO 4217 code.
+ */
+export function validateCurrency(value: unknown): string {
+  const code = requireString(value, "Currency", 3);
+  if (!/^[A-Z]{3}$/.test(code)) {
+    throw new ValidationError("Currency must be a 3-letter ISO 4217 code (e.g., SAR, USD)");
+  }
+  return code;
+}
+
+/**
+ * Validate a phone number.  Must match E.164 or common formats.
+ */
+export function validatePhone(value: unknown): string {
+  const phone = requireString(value, "Phone", 20);
+  if (!/^\+?[\d\s\-()]{5,20}$/.test(phone)) {
+    throw new ValidationError("Phone must be a valid phone number (E.164 or common format)");
+  }
+  return phone;
+}
+
+/**
+ * Validate a category slug.  Must be 1–50 lowercase alphanumeric with hyphens.
+ */
+export function validateCategorySlug(value: unknown): string {
+  const slug = requireString(value, "Category", 50);
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+    throw new ValidationError("Category must be a valid slug (lowercase letters, digits, and hyphens)");
+  }
+  return slug;
+}
+
+/**
+ * Validate a product condition.
+ */
+export function validateCondition(value: unknown): string {
+  return requireEnum(value, "Condition", ["new", "excellent", "good", "fair"]);
+}
+
+/**
+ * Validate a location string.  Must be 1–100 characters.
+ */
+export function validateLocation(value: unknown): string {
+  return requireString(value, "Location", 100);
+}
+
+/**
+ * Validate a URL.  Must be a valid HTTP(S) URL or empty.
+ */
+export function validateUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new ValidationError("URL must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new ValidationError("URL must use http or https protocol");
+    }
+    return trimmed;
+  } catch {
+    throw new ValidationError("URL must be a valid URL");
+  }
+}
+
+/**
+ * Validate a single URL in an array of images.
+ */
+export function validateImageUrl(value: unknown): string | undefined {
+  return validateUrl(value);
+}
+
+/**
+ * Validate an array of image URLs.  Max 10 images.
+ */
+export function validateImageUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new ValidationError("Images must be an array of URLs");
+  }
+  if (value.length > 10) {
+    throw new ValidationError("Maximum 10 images allowed");
+  }
+  const result: string[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const url = validateUrl(value[i], `images[${i}]`);
+    if (url !== undefined) {
+      result.push(url);
+    }
+  }
+  return result;
+}
+
+/**
+ * Validate a pagination offset.
+ */
+export function validateOffset(value: unknown): number {
+  return optionalInteger(value, "Offset", { min: 0 }) ?? 0;
+}
+
+/**
+ * Validate a pagination limit (max 100).
+ */
+export function validateLimit(value: unknown): number {
+  return optionalInteger(value, "Limit", { min: 1, max: 100 }) ?? 20;
+}
+
+/**
+ * Validate a search query (1–100 characters, no special restrictions to support Arabic).
+ */
+export function validateSearch(value: unknown): string | undefined {
+  return optionalString(value, "Search", 100);
+}
+
+/**
+ * Validate an ad status.
+ */
+export function validateAdStatus(value: unknown): string {
+  return requireEnum(value, "Status", [
+    "pending",
+    "approved",
+    "rejected",
+    "hidden",
+    "expired",
+    "sold",
+    "deleted",
+  ]);
+}
+
+/**
+ * Validate a report reason.
+ */
+export function validateReportReason(value: unknown): string {
+  return requireEnum(value, "Reason", [
+    "spam",
+    "prohibited",
+    "counterfeit",
+    "offensive",
+    "misleading",
+    "wrong_category",
+    "other",
+  ]);
+}
+
+/**
+ * Validate a report severity.
+ */
+export function validateReportSeverity(value: unknown): string {
+  return requireEnum(value, "Severity", ["low", "medium", "high"]);
+}
+
+/**
+ * Validate a report status.
+ */
+export function validateReportStatus(value: unknown): string {
+  return requireEnum(value, "Status", ["open", "investigating", "resolved"]);
+}
+
+/**
+ * Validate a user status.
+ */
+export function validateUserStatus(value: unknown): string {
+  return requireEnum(value, "Status", ["active", "suspended"]);
+}

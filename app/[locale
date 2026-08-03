@@ -1,0 +1,39 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+import { DataTable, type Column } from "@/components/dashboard/DataTable";
+import { Icon } from "@/components/ui/Icon";
+import type { Category } from "@/types";
+
+export function CategoriesTable({ categories }: { categories: Category[] }) {
+  const t = useTranslations();
+
+  const columns: Column<Category>[] = [
+    {
+      key: "name",
+      header: t("categories.name"),
+      cell: (c) => (
+        <div className="flex items-center gap-md">
+          <span className={`grid place-items-center w-9 h-9 rounded-lg ${c.color}`}>
+            <Icon name={c.icon} size={18} />
+          </span>
+          <span className="font-medium text-on-surface">{c.nameAr ?? c.nameEn ?? c.name}</span>
+        </div>
+      ),
+    },
+    { key: "slug", header: t("categories.slug"), cell: (c) => c.slug },
+    { key: "count", header: t("categories.count"), cell: (c) => c.count },
+    {
+      key: "status",
+      header: t("categories.status"),
+      cell: (c) =>
+        c.hidden ? (
+          <span className="text-on-surface-variant">{t("categories.hidden")}</span>
+        ) : (
+          <span className="text-primary">{t("categories.visible")}</span>
+        ),
+    },
+  ];
+
+  return <DataTable columns={columns} rows={categories} rowKey={(c) => c.slug} />;
+}

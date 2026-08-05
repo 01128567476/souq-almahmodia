@@ -68,6 +68,8 @@ export {
 
 export {
   accounts,
+  emailVerificationTokens,
+  otpTokens,
   passwordResetTokens,
 } from "./schemas-audit";
 

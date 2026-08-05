@@ -2,7 +2,8 @@
  * POST /api/auth/register
  *
  * Register a new user with email and password.
- * Creates user in PostgreSQL, then authenticates via Auth.js.
+ * Creates user in PostgreSQL with emailVerificationRequired=true,
+ * then sends verification email. User must verify email before login.
  *
  * Request body:
  * - fullName (required): Display name
@@ -13,28 +14,39 @@
  *
  * Response:
  * - success: boolean
- * - userId: string (UUID of created user)
  * - message: string
  *
- * Auth.js integration:
- * - User creation uses Drizzle ORM directly
- * - Authentication uses Auth.js signIn("credentials")
- * - Session cookie is set by Auth.js (not manually)
+ * Flow:
+ * 1. Validate inputs
+ * 2. Check email/username uniqueness
+ * 3. Create user with emailVerified = false
+ * 4. Generate verification token
+ * 5. Send verification email
+ * 6. Return success (user must verify email before login)
+ *
+ * Note: User is NOT automatically logged in after registration.
+ * They must verify their email first, then login normally.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db-server";
 import { users } from "@/drizzle/schema";
-import { hashPassword } from "@/services/repositories/passwordRepository";
-import { signIn } from "@/auth";
 import { eq } from "drizzle-orm";
+import bcrypt from "bcryptjs";
+import { createVerificationToken } from "@/services/repositories/verificationRepository";
+import { getEmailService } from "@/services/email/emailService";
 
+/** Password minimum requirements */
+const MIN_PASSWORD_LENGTH = 8;
+
+/** Validate email format */
 function validateEmail(email: string): string | null {
   if (!email?.trim()) return "Email is required";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "Invalid email format";
   return null;
 }
 
+/** Validate username */
 function validateUsername(username: string): string | null {
   if (!username?.trim()) return "Username is required";
   if (username.length < 3) return "Username must be at least 3 characters";
@@ -43,20 +55,44 @@ function validateUsername(username: string): string | null {
   return null;
 }
 
+/** Validate password strength */
 function validatePassword(password: string): string | null {
   if (!password) return "Password is required";
-  if (password.length < 8) return "Password must be at least 8 characters";
+  if (password.length < MIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
   if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
   if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
   if (!/[0-9]/.test(password)) return "Password must contain at least one number";
   return null;
 }
 
+/** Validate full name */
 function validateFullName(name: string): string | null {
   if (!name?.trim()) return "Full name is required";
   if (name.length < 2) return "Name must be at least 2 characters";
   if (name.length > 100) return "Name must be at most 100 characters";
   return null;
+}
+
+/** Rate limiting: max 5 requests per window */
+const MAX_REQUESTS = 5;
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+/** In-memory rate limiter (extend to Redis for production). */
+const registerStore = new Map<string, Date[]>();
+
+function isRateLimited(identifier: string): boolean {
+  const now = Date.now();
+  const timestamps = registerStore.get(identifier) ?? [];
+  const recent = timestamps.filter(t => now - t.getTime() < RATE_LIMIT_WINDOW_MS);
+
+  if (recent.length >= MAX_REQUESTS) {
+    registerStore.set(identifier, recent);
+    return true;
+  }
+
+  recent.push(new Date());
+  registerStore.set(identifier, recent);
+  return false;
 }
 
 export async function POST(request: NextRequest) {
@@ -76,7 +112,16 @@ export async function POST(request: NextRequest) {
     const phone = raw.phone ?? "";
     const password = raw.password ?? "";
 
-    // Validate inputs
+    // Rate limit by IP (use remote address or IP from headers)
+    const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+    if (isRateLimited(ip)) {
+      return NextResponse.json(
+        { success: false, message: "Too many registration attempts. Please wait 1 hour." },
+        { status: 429 }
+      );
+    }
+
+    // Validate all inputs
     const fullNameError = validateFullName(fullName);
     if (fullNameError) {
       return NextResponse.json(
@@ -109,16 +154,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Hash password
-    const { salt: pwSalt, hash: pwHash } = hashPassword(password);
+    // Hash password with bcrypt (salt rounds = 12 for production)
+    const passwordHash = await bcrypt.hash(password, 12);
 
     // Use a transaction to ensure atomicity
+    const normalizedEmail = email.trim().toLowerCase();
+    const usernameLower = username.trim().toLowerCase();
+
     const result = await db.transaction(async (tx) => {
       // Check if email already exists (case-insensitive)
       const existingByEmail = await tx
         .select({ id: users.id })
         .from(users)
-        .where(eq(users.email, email.trim().toLowerCase()))
+        .where(eq(users.email, normalizedEmail))
         .limit(1);
 
       if (existingByEmail.length > 0) {
@@ -126,7 +174,6 @@ export async function POST(request: NextRequest) {
       }
 
       // Check if username already exists (case-insensitive)
-      const usernameLower = username.trim().toLowerCase();
       const existingByUsername = await tx
         .select({ id: users.id })
         .from(users)
@@ -137,19 +184,23 @@ export async function POST(request: NextRequest) {
         return { error: "Username already taken" };
       }
 
-      // Create user
+      // Create user with emailVerified = false
+      // hasPassword = true (this is a regular registration)
+      const now = new Date();
       const [user] = await tx
         .insert(users)
         .values({
           displayName: fullName.trim(),
           username: usernameLower,
           usernameLower: usernameLower,
-          email: email.trim().toLowerCase(),
+          email: normalizedEmail,
           phone: phone.trim() || null,
-          passwordHash: pwHash,
-          passwordSalt: pwSalt,
+          passwordHash: passwordHash,
           hasPassword: true,
+          emailVerified: null, // User must verify email before login
           role: "user",
+          createdAt: now,
+          updatedAt: now,
         })
         .returning();
 
@@ -157,7 +208,13 @@ export async function POST(request: NextRequest) {
         return { error: "Failed to create user" };
       }
 
-      return { user };
+      // Generate verification token
+      const tokenResult = await createVerificationToken(user.id, normalizedEmail);
+      if (tokenResult.error) {
+        return { error: "Failed to generate verification token" };
+      }
+
+      return { user, verificationToken: tokenResult.token };
     });
 
     if ("error" in result) {
@@ -167,15 +224,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Authenticate via Auth.js (sets session cookie)
-    await signIn("credentials", {
-      email: result.user.email,
-      password,
-      redirect: false,
-    });
+    // Send verification email
+    try {
+      const emailService = getEmailService();
+      const verificationUrl = `${process.env.NEXTAUTH_URL}/api/auth/verify-email?token=${result.verificationToken}`;
+      
+      // For verification email, we just need to send the URL
+      await emailService.sendVerificationEmail(
+        result.user.email,
+        result.verificationToken,
+        "en"
+      );
+    } catch (emailError) {
+      console.error("[REGISTER] Email send failed:", emailError);
+      // Continue even if email fails — user can resend later
+    }
 
+    // User is NOT logged in — they must verify email first
     return NextResponse.json(
-      { success: true, userId: result.user.id, message: "Registration successful" },
+      {
+        success: true,
+        message: "Registration successful. Please check your email to verify your account.",
+      },
       { status: 201 }
     );
   } catch (error) {

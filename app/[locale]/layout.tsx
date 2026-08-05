@@ -34,6 +34,7 @@ export async function generateMetadata({
   return {
     title: t("name"),
     description: t("tagline"),
+    icons: "/favicon.svg",
   };
 }
 

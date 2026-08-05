@@ -16,7 +16,7 @@ export function Icon({ name, className, size, style, ...rest }: IconProps) {
   return (
     <span
       className={cn("material-symbols-outlined", className)}
-      style={{ ...(size ? { fontSize: `${size}px` } : null), ...style }}
+      style={{ fontFamily: '"Material Symbols Outlined"', ...(size ? { fontSize: `${size}px` } : null), ...style }}
       aria-hidden={rest["aria-hidden"] ?? true}
     >
       {name}

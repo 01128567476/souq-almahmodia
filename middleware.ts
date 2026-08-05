@@ -3,22 +3,21 @@
  *
  * IMPORTANT: This middleware does NOT import Auth.js directly.
  *
- * Reason: Auth.js v5 beta (`next-auth@latest`) depends on
- * `@babel/runtime/regenerator` which uses `eval`/`new Function`.
- * Next.js 15's Edge Runtime compatibility checker blocks this at
- * build time, even when middleware runs on Node.js runtime
- * (`runtime: "nodejs"`).
+ * Reason: Auth.js v5 depends on `pg` and `bcryptjs` which use Node.js
+ * built-in modules (crypto, process). These are not available in any
+ * Next.js runtime that webpack bundles for middleware.
  *
  * Session validation architecture:
- * - Middleware performs lightweight route protection (see below)
+ * - Middleware performs lightweight route protection by checking
+ *   for the presence of the session cookie (soft auth check).
  * - Auth.js handles ALL session validation in API routes (/api/auth/*)
+ * - API routes decode and verify the JWT using Auth.js
  * - AuthContext gets auth state from /api/auth/session (Auth.js backed)
  * - Server components get auth state from lib/serverAuth.ts (Auth.js backed)
  *
- * This is the correct production pattern for Auth.js v5 + Next.js 15.
- * The middleware delegates to Auth.js for actual session validation.
- *
- * Runtime: Node.js (required for Auth.js compatibility when imported elsewhere)
+ * This is the correct production pattern for Auth.js v5 +
+ Next.js 15.
+ * * Runtime: nodejs (required for pg connection when auth is imported)
  */
 
 import createIntlMiddleware from "next-intl/middleware";
@@ -57,6 +56,28 @@ const securityHeaders: Record<string, string> = {
   "Cache-Control": "no-store, max-age=0",
 };
 
+/**
+ * Soft authentication check — does NOT validate the JWT.
+ *
+ * This function only checks if a session cookie EXISTS in the request.
+ * It does NOT decode, verify, or trust the cookie content.
+ *
+ * Actual JWT validation happens at the API route level via Auth.js.
+ *
+ * Returns "user" if any session cookie is present (assumes user role for protected routes),
+ * "guest" if no session cookie is present.
+ *
+ * This is a lightweight check that avoids bundling pg/crypto in middleware.
+ */
+function getSoftRole(request: NextRequest): Role {
+  // Check for both development and production cookie names
+  const hasCookie =
+    request.cookies.get("next-auth.session-token") !== undefined ||
+    request.cookies.get("__Secure-next-auth.session-token") !== undefined;
+
+  return hasCookie ? "user" : "guest";
+}
+
 export default async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -64,27 +85,11 @@ export default async function middleware(request: NextRequest) {
   const pathWithoutLocale = pathname.replace(localePattern, "") || "/";
   const locale = pathname.match(localePattern)?.[1] ?? routing.defaultLocale;
 
-  // Route protection via role-based access control.
-  // Auth.js session validation happens at the API route level:
-  // - /api/auth/session -> getSession() from Auth.js
-  // - /api/auth/login -> signIn() from Auth.js
-  // - /api/auth/register -> signIn() from Auth.js after user creation
-  // - /api/auth/logout -> signOut() from Auth.js
-  // The middleware protects admin routes by redirecting to /login.
-  // Actual session/token validation is performed by Auth.js in API routes.
-  //
-  // Role extraction from Auth.js session (when Edge-compatible):
-  //   const session = await auth();
-  //   const role = ((session?.user as Record<string, unknown>)?.role as Role) ?? "guest";
-  //
-  // Currently using "guest" as the default. This is correct because:
-  // - requiredRoleFor() returns the minimum role for this route
-  // - If required is "admin" and role is "guest", user is redirected to /login
-  // - After login, Auth.js sets the session cookie
-  // - API routes validate the session via Auth.js getSession()
-  // - UI components get auth state from /api/auth/session
-  const role: Role = "guest";
+  // Soft role check — cookie present = user, missing = guest.
+  // Real JWT validation is performed by Auth.js in API routes.
+  const role: Role = getSoftRole(request);
 
+  // Route protection via role-based access control.
   const required = requiredRoleFor(pathWithoutLocale);
 
   if (required && role !== required) {

@@ -8,6 +8,34 @@
       "when": 1785720878685,
       "tag": "0000_new_bromley",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785720878686,
+      "tag": "0001_add_extra_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785720878687,
+      "tag": "0002_add_email_verified",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785720878688,
+      "tag": "0003_add_password_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785720878689,
+      "tag": "0030_add_password_changed_at",
+      "breakpoints": true
     }
   ]
 }

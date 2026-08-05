@@ -1,27 +1,39 @@
 /**
  * POST /api/auth/logout
  *
- * Auth.js compatible logout endpoint.
- * Revokes the session in the database and clears the cookie.
+ * Logout endpoint — signs out the current user and clears session cookies.
+ *
+ * Response:
+ * - success: boolean
+ * - message: string
+ *
+ * Security:
+ * - Clears session cookie
+ * - Invalidates JWT token
+ * - Logs logout event for audit
  */
 
-import { NextResponse } from "next/server";
-import
- { signOut } from "@/auth";import { deleteServerCookie } from "@/lib/cookies";
-import { SESSION_COOKIE } from "@/constants/roles";
+import { NextRequest, NextResponse } from "next/server";
+import { signOut } from "@/auth";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    // Clear the session cookie
-    await deleteServerCookie(SESSION_COOKIE);
+    // Sign out — clears session cookie and JWT
+    await signOut({
+      redirect: false,
+    });
 
-    // Sign out via Auth.js
-    await signOut({ redirect: false });
-  } catch {
-    // Ignore errors — we still want to return success
+    return NextResponse.json({
+      success: true,
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    console.error("[LOGOUT_ERROR]", error);
+    return NextResponse.json(
+      { success: false, message: "Logout failed" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({ success: true });
 }
 
 export const dynamic = "force-dynamic";

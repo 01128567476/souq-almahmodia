@@ -499,3 +499,227 @@ export function logMassAction(
   });
   return entry;
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                                Authentication audit loggers */
+/* -------------------------------------------------------------------------- */
+
+/** Log a credentials login attempt. */
+export function logCredentialsLogin(
+  userId: string,
+  userName: string,
+  ipAddress: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "login" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `Method: Credentials, IP: ${ipAddress}`,
+  });
+  return entry;
+}
+
+/** Log a Google OAuth login. */
+export function logGoogleLogin(
+  userId: string,
+  userName: string,
+  ipAddress: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "google_login" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress}`,
+  });
+  return entry;
+}
+
+/** Log a Google account linking. */
+export function logGoogleLink(
+  userId: string,
+  userName: string,
+  ipAddress: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "google_linked" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress}`,
+  });
+  return entry;
+}
+
+/** Log an email verification. */
+export function logEmailVerified(
+  userId: string,
+  userName: string,
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "email_verified" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log an OTP verification. */
+export function logOtpVerified(
+  userId: string,
+  userName: string,
+  purpose: "reset" | "verify" | "login",
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "otp_verified" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `Purpose: ${purpose}, IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a failed OTP attempt. */
+export function logFailedOtp(
+  userId: string,
+  userName: string,
+  purpose: "reset" | "verify" | "login",
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "otp_failed" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `Purpose: ${purpose}, IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a password reset. */
+export function logPasswordReset(
+  userId: string,
+  userName: string,
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "password_reset" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a new password creation (first password for Google user). */
+export function logPasswordCreated(
+  userId: string,
+  userName: string,
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "password_created" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a resend verification email. */
+export function logResendVerification(
+  userId: string,
+  userName: string,
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "resend_verification" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a resend OTP. */
+export function logResendOtp(
+  userId: string,
+  userName: string,
+  purpose: "reset" | "verify" | "login",
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "resend_otp" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `Purpose: ${purpose}, IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a user registration. */
+export function logUserRegistration(
+  userId: string,
+  userName: string,
+  email: string,
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "register" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `Email: ${email}, IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}
+
+/** Log a user logout. */
+export function logUserLogout(
+  userId: string,
+  userName: string,
+  ipAddress?: string,
+): AuditLogEntry {
+  const entry = logAudit({
+    actorId: userId,
+    actorName: userName,
+    action: "logout" as ModerationAction,
+    targetType: "system" as AuditTargetType,
+    targetId: "auth",
+    targetLabel: "Authentication System",
+    note: `IP: ${ipAddress || "unknown"}`,
+  });
+  return entry;
+}

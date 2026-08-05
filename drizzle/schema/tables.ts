@@ -92,6 +92,9 @@ export const users = pgTable("users", {
   /** Whether the user has set a password (null means OAuth-only, no password). */
   hasPassword: boolean("has_password").default(false),
 
+  /** When the user last changed their password. Used for JWT session invalidation. */
+  passwordChangedAt: timestamp("password_changed_at"),
+
   /** Timestamps. */
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

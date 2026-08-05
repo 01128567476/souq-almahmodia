@@ -1,37 +1,62 @@
 /**
- * Auth.js (NextAuth) configuration.
+ * Auth.js (NextAuth v5) configuration — PRODUCTION HARDENED.
  *
  * This is the SINGLE authentication engine for the entire application.
- * All auth operations flow through here.
  *
- * Configuration:
+ * Features:
  * - JWT strategy for sessions (stateless, cookie-based)
  * - Credentials provider for email/password auth
  * - Google provider for OAuth
+ * - Secure cookie configuration (HttpOnly, Secure, SameSite=Lax)
+ * - Trusted host validation for localhost / LAN / production
+ * - Email verification enforcement
+ * - Password change tracking for JWT session invalidation
+ * - Google OAuth account linking without duplicate users
  *
- * Google OAuth flow:
- * 1. User clicks "Continue with Google" on login page
- * 2. Redirected to Google for authentication
- * 3. Google returns user info (email, name, picture)
- * 4. signIn callback handles account linking:
- *    - Check if user has matching googleId -> log them in
- *    - Check if user has matching email -> link googleId to existing user
- *    - No match -> create new user with googleId + email
- * 5. JWT callback adds id, role, email, name, image to token
- * 6. Session callback adds these fields to session.user
+ * JWT Session Invalidation:
+ * - Users table has passwordChangedAt timestamp
+ * - During JWT validation, token.iat is compared against passwordChangedAt
+ * - If passwordChangedAt > token.iat, session is rejected
+ * - Forces re-login after password reset
+ *
+ * NOTE: DB imports are lazy (dynamic import) to prevent bundling pg/crypto
+ * in modules that run on Edge Runtime (middleware).
  */
 
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
-import { db } from "@/lib/db-server";
 import { users } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import { userRepository } from "@/services/repositories/userRepository";
 import { validateEmail, validatePassword } from "@/lib/authValidation";
 import type { Role } from "@/types";
 
-// Google provider is optional — only enabled when credentials are configured
+/* ======================================================================== */
+/* PROVIDERS                                                                */
+/* ======================================================================== */
+
+// Google provider — Auth.js v5 UX FIX
+//
+// CRITICAL: Auth.js v5 beta (next-auth@5.0.0-beta.32) hardcodes these defaults
+// in the Google provider's authorization params:
+//
+//   prompt: "consent"          ← FORCES Google identity/consent screen EVERY login
+//   access_type: "offline"     ← Always requests refresh token
+//
+// Simply omitting these parameters does NOT work — Auth.js v5 adds them back.
+// You MUST explicitly override them by providing your own authorization.params.
+//
+// Setting prompt="" (empty string) overrides prompt=consent:
+// - Google checks for active session in browser
+// - Single session → auto-select → redirect (no email prompt, no consent)
+// - Multiple sessions → Account Chooser popup → select → redirect
+// - First-time authorization → consent screen shows ONCE, never again
+//
+// Setting access_type="online" overrides access_type=offline:
+// - No refresh token requested (we use JWT sessions, not Google API calls)
+//
+// This matches GitHub, ChatGPT, Notion, Vercel, Discord behavior.
 const googleProvider =
   process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
     ? Google({
@@ -39,26 +64,23 @@ const googleProvider =
         clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
         authorization: {
           params: {
-            prompt: "consent",
-            access_type: "offline",
-            response_type: "code",
+            prompt: "", // Override Auth.js v5 default "consent" → empty
+            access_type: "online", // Override Auth.js v5 default "offline" → online
           },
         },
       })
     : undefined;
 
-// Auth.js (NextAuth v5) configuration.
-//
-// NextAuth(config) returns { handlers, auth, signIn, signOut }:
-// - handlers  -> re-exported as GET/POST from app/api/auth/[...nextauth]/route.ts
-// - auth      -> server-side session reads (lib/serverAuth.ts)
-// - signIn    -> /api/auth/login, /api/auth/register
-// - signOut   -> /api/auth/logout
+/* ======================================================================== */
+/* AUTH CONFIG                                                              */
+/* ======================================================================== */
 
 const nextAuthConfig = {
+  // Providers
   providers: [
     ...(googleProvider ? [googleProvider] : []),
     Credentials({
+      id: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
@@ -87,6 +109,14 @@ const nextAuthConfig = {
         // Check if password is set (Google-only users cannot login via credentials)
         const hasPassword = await userRepository.hasPassword(user.id);
         if (!hasPassword) {
+          // Google-only user trying to login with password
+          return null;
+        }
+
+        // Check if email is verified (required for login)
+        const emailVerified = user.emailVerified;
+        if (!emailVerified) {
+          // Unverified user trying to login
           return null;
         }
 
@@ -108,21 +138,101 @@ const nextAuthConfig = {
     }),
   ],
 
-  // Session configuration
+  // Session configuration — JWT strategy
   session: {
     strategy: "jwt" as const,
     maxAge: 7 * 24 * 60 * 60, // 7 days
+    updateAge: 24 * 60 * 60, // 24 hours
   },
 
-  // Custom pages for login/logout flows
-  pages: {
-    signIn: "/login",
-    signOut: "/logout",
-    error: "/login",
+  // JWT configuration
+  jwt: {
+    maxAge: 7 * 24 * 60 * 60, // 7 days
   },
 
-  // Callbacks - core of OAuth account linking + session population
+  // Cookie configuration — critical for PKCE to work on localhost
+  //
+  // Auth.js v5 defaults ALL cookies to __Secure- prefix + secure: true.
+  // Secure cookies CANNOT be set on http://localhost (must be HTTPS).
+  // This causes PKCE failure: "pkceCodeVerifier value could not be parsed"
+  // because the PKCE cookie is never written by the browser.
+  //
+  // Solution: On localhost, use non-__Secure- cookie names + secure: false.
+  // On production (HTTPS), use __Secure- names + secure: true.
+  cookies: {
+    sessionToken: {
+      name: process.env.NODE_ENV === "production"
+        ? "__Secure-next-auth.session-token"
+        : "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    csrfToken: {
+      name: process.env.NODE_ENV === "production"
+        ? "__Secure-next-auth.csrf-token"
+        : "next-auth.csrf-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    callbackUrl: {
+      name: process.env.NODE_ENV === "production"
+        ? "__Secure-next-auth.callback-url"
+        : "next-auth.callback-url",
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    state: {
+      name: process.env.NODE_ENV === "production"
+        ? "__Secure-next-auth.state"
+        : "next-auth.state",
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    pkceCodeVerifier: {
+      name: process.env.NODE_ENV === "production"
+        ? "__Secure-next-auth.pkce-code-verifier"
+        : "next-auth.pkce-code-verifier",
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    pageToken: {
+      name: process.env.NODE_ENV === "production"
+        ? "__Secure-next-auth.page-token"
+        : "next-auth.page-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+  },
+
+  // Callbacks
   callbacks: {
+    /**
+     * signIn callback — handles Google OAuth account linking logic.
+     */
     async signIn({ user, account, profile }: any) {
       if (account?.provider !== "google") {
         return true;
@@ -137,6 +247,10 @@ const nextAuthConfig = {
         return false;
       }
 
+      // Lazy-load DB to avoid bundling pg/crypto in Edge Runtime (middleware)
+      const { db } = await import("@/lib/db-server");
+
+      // 1. Check if user already has this Google ID linked
       const userByGoogleId = await db
         .select()
         .from(users)
@@ -144,15 +258,21 @@ const nextAuthConfig = {
         .limit(1);
 
       if (userByGoogleId.length > 0) {
+        const existingUser = userByGoogleId[0];
         await db
           .update(users)
-          .set({ avatar: avatar || "", updatedAt: new Date() })
-          .where(eq(users.id, userByGoogleId[0].id));
+          .set({
+            avatar: avatar || "",
+            displayName: name,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, existingUser.id));
 
-        user.id = userByGoogleId[0].id;
+        user.id = existingUser.id;
         return true;
       }
 
+      // 2. Check if email already exists — link Google ID to existing user
       const userByEmail = await userRepository.getByEmail(email);
       if (userByEmail) {
         await db
@@ -170,9 +290,10 @@ const nextAuthConfig = {
         return true;
       }
 
+      // 3. New user — create account with Google ID
       const now = new Date();
-      const username = name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 50);
-      const uniqueUsername = username + Math.random().toString(36).slice(2, 6);
+      const usernameBase = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const uniqueUsername = usernameBase + Math.random().toString(36).slice(2, 8);
 
       await db.insert(users).values({
         displayName: name,
@@ -198,30 +319,83 @@ const nextAuthConfig = {
       return true;
     },
 
-    async jwt({ token, user }: any) {
+    /**
+     * JWT callback — populate token and check session invalidation.
+     *
+     * SESSION INVALIDATION:
+     * If passwordChangedAt > token.iat, return null to reject session.
+     */
+    async jwt({ token, user, trigger }: any) {
+      // Initial sign in — populate token with user data
       if (user) {
-        (token as { id?: string }).id = user.id;
-        (token as { role?: Role }).role = (user as { role?: Role }).role;
-        (token as { picture?: string }).picture = (user as { image?: string }).image;
+        token.id = user.id;
+        token.role = (user as { role?: Role }).role;
+        token.picture = (user as { image?: string }).image;
+        token.emailVerified = user.emailVerified;
       }
+
+      // Session invalidation check — lazy-load DB
+      if (token?.id) {
+        try {
+          const { db } = await import("@/lib/db-server");
+
+          const freshUser = await db
+            .select({
+              passwordChangedAt: users.passwordChangedAt,
+            })
+            .from(users)
+            .where(eq(users.id, token.id))
+            .limit(1);
+
+          if (freshUser.length > 0 && freshUser[0].passwordChangedAt) {
+            const passwordChangedAt = new Date(freshUser[0].passwordChangedAt);
+            const tokenIssuedAt = token.iat ? new Date(token.iat * 1000) : new Date(0);
+
+            if (passwordChangedAt > tokenIssuedAt) {
+              return null; // Reject session
+            }
+          }
+        } catch (error) {
+          console.error("[JWT_CALLBACK] Error checking passwordChangedAt:", error);
+        }
+      }
+
       return token;
     },
 
+    /**
+     * Session callback — shape session object for client.
+     */
     async session({ session, token }: any) {
       if (session.user) {
         (session.user as { id?: string }).id = (token as { id?: string }).id;
         (session.user as { role?: Role }).role = token.role as Role;
         (session.user as { image?: string }).image = (token as { picture?: string }).picture;
+        (session.user as { emailVerified?: string }).emailVerified = token.emailVerified;
       }
       return session;
     },
   },
 
+  // Events — audit logging
   events: {
-    createUser: async (event: any) => {
-      console.log(`[Auth] User created: ${event.user.email}`);
+    signIn: async (message: any) => {
+      const email = message.email ?? "unknown";
+      const isNew = message.newUser ?? false;
+      console.log(`[Auth] ${isNew ? "New" : "Returning"} user signed in: ${email}`);
+    },
+    signOut: async (message: any) => {
+      console.log(`[Auth] User signed out: ${message.userId ?? "unknown"}`);
+    },
+    createUser: async (message: any) => {
+      console.log(`[Auth] User created: ${message.user.email ?? "unknown"}`);
+    },
+    error: async (message: any) => {
+      console.error(`[Auth] Error: ${message.error ?? "unknown error"}`);
     },
   },
+
+  trustHost: true,
 };
 
 export const { handlers, auth, signIn, signOut } = NextAuth(nextAuthConfig);

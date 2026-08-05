@@ -10,11 +10,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/auth";
+import { auth } from "@/auth";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession({ request });
+    const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ data: null }, { status: 401 });
@@ -26,9 +26,8 @@ export async function GET(request: NextRequest) {
           id: session.user.id,
           name: session.user.name ?? "",
           email: session.user.email ?? "",
-          role: (session.user as Record<string, unknown>).role as
-            "guest" | "user" | "admin" ?? "guest",
-          avatar: (session.user as Record<string, unknown>).image as string | undefined,
+          role: session.user.role ?? "guest",
+          avatar: session.user.image ?? undefined,
         },
         expires: session.expires ?? "",
       },

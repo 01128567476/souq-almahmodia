@@ -42,7 +42,7 @@ export async function getViewerId(): Promise<string | null> {
  */
 export async function getViewerRole(): Promise<Role> {
   const session = await getSession();
-  return ((session?.user as Record<string, unknown>)?.role as Role) ?? "guest";
+  return session?.user?.role ?? "guest";
 }
 
 /**
@@ -64,7 +64,7 @@ export async function getCurrentUser() {
     id: session.user.id,
     name: session.user.name ?? "",
     email: session.user.email ?? "",
-    role: ((session.user as Record<string, unknown>).role as Role) ?? "guest",
-    avatar: (session.user as Record<string, unknown>).image as string | undefined,
+    role: session.user.role ?? "guest",
+    avatar: session.user.image ?? undefined,
   };
 }

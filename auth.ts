@@ -47,7 +47,15 @@ const googleProvider =
       })
     : undefined;
 
-export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
+// Auth.js (NextAuth v5) configuration.
+//
+// NextAuth(config) returns { handlers, auth, signIn, signOut }:
+// - handlers  -> re-exported as GET/POST from app/api/auth/[...nextauth]/route.ts
+// - auth      -> server-side session reads (lib/serverAuth.ts)
+// - signIn    -> /api/auth/login, /api/auth/register
+// - signOut   -> /api/auth/logout
+
+const nextAuthConfig = {
   providers: [
     ...(googleProvider ? [googleProvider] : []),
     Credentials({
@@ -102,7 +110,7 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
 
   // Session configuration
   session: {
-    strategy: "jwt",
+    strategy: "jwt" as const,
     maxAge: 7 * 24 * 60 * 60, // 7 days
   },
 
@@ -115,22 +123,7 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
 
   // Callbacks - core of OAuth account linking + session population
   callbacks: {
-    /**
-     * signIn callback - handles Google OAuth account linking.
-     *
-     * Flow:
-     * 1. Check if user exists with matching googleId -> log in as that user
-     * 2. If no googleId match, check if user exists with matching email
-     *    -> link the googleId to the existing user (allow account merging)
-     * 3. If no user with matching email -> create a new user
-     *
-     * Security:
-     * - Never creates duplicate users for the same email
-     * - Google-verified email is trusted (Google verifies it)
-     * - googleId is stored on users table (unique constraint)
-     */
-    async signIn({ user, account, profile }) {
-      // Only handle Google OAuth
+    async signIn({ user, account, profile }: any) {
       if (account?.provider !== "google") {
         return true;
       }
@@ -141,10 +134,9 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
       const avatar = (profile?.image ?? user.image ?? "").trim();
 
       if (!email || !googleId) {
-        return false; // Reject sign-in if essential data is missing
+        return false;
       }
 
-      // Step 1: Check if user exists with this googleId
       const userByGoogleId = await db
         .select()
         .from(users)
@@ -152,8 +144,6 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
         .limit(1);
 
       if (userByGoogleId.length > 0) {
-        // Google account already linked - log in as that user
-        // Update avatar if changed
         await db
           .update(users)
           .set({ avatar: avatar || "", updatedAt: new Date() })
@@ -163,10 +153,8 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
         return true;
       }
 
-      // Step 2: Check if user exists with this email
       const userByEmail = await userRepository.getByEmail(email);
       if (userByEmail) {
-        // Link googleId to existing user account
         await db
           .update(users)
           .set({
@@ -182,7 +170,6 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
         return true;
       }
 
-      // Step 3: No user found - create new user with googleId
       const now = new Date();
       const username = name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 50);
       const uniqueUsername = username + Math.random().toString(36).slice(2, 6);
@@ -204,18 +191,14 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
 
       const createdUser = await userRepository.getByEmail(email);
       if (!createdUser) {
-        return false; // Failed to create user
+        return false;
       }
 
       user.id = createdUser.id;
       return true;
     },
 
-    /**
-     * JWT callback - adds user data to the token.
-     * This ensures session.user has id, role, email, name, image.
-     */
-    async jwt({ token, user }) {
+    async jwt({ token, user }: any) {
       if (user) {
         (token as { id?: string }).id = user.id;
         (token as { role?: Role }).role = (user as { role?: Role }).role;
@@ -224,20 +207,7 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
       return token;
     },
 
-    /**
-     * Session callback - adds user data to the session.
-     * Session shape:
-     * {
-     *   user: {
-     *     id: string,
-     *     name: string,
-     *     email: string,
-     *     role: Role,
-     *     image: string | undefined
-     *   }
-     * }
-     */
-    async session({ session, token }) {
+    async session({ session, token }: any) {
       if (session.user) {
         (session.user as { id?: string }).id = (token as { id?: string }).id;
         (session.user as { role?: Role }).role = token.role as Role;
@@ -247,10 +217,11 @@ export const { handlers, auth, signIn, signOut, getSession } = NextAuth({
     },
   },
 
-  // Events - log authentication events for debugging
   events: {
-    createUser: async (event) => {
+    createUser: async (event: any) => {
       console.log(`[Auth] User created: ${event.user.email}`);
     },
   },
-});
+};
+
+export const { handlers, auth, signIn, signOut } = NextAuth(nextAuthConfig);

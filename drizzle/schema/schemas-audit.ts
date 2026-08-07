@@ -156,7 +156,7 @@ export const otpTokens = pgTable(
     channel: varchar("channel", { length: 10 }).notNull().default("email"),
 
     /** The actual OTP code (hashed with SHA-256). */
-    code: varchar("code", { length: 10 }).notNull(),
+    code: varchar("code", { length: 256 }).notNull(),
 
     /** SHA-256 hash of the OTP code. */
     tokenHash: varchar("token_hash", { length: 256 }).notNull(),

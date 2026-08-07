@@ -1,7 +1,6 @@
 import Image from "next/image";
 import { setRequestLocale, getTranslations } from "next-intl/server";
-import { getServerRole } from "@/lib/cookies";
-import { getCurrentUser } from "@/lib/serverAuth";
+import { getCurrentUser, getViewerRole } from "@/lib/serverAuth";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import { Icon } from "@/components/ui/Icon";
 import type { Locale } from "@/i18n/routing";
@@ -15,7 +14,7 @@ export default async function ProfilePage({
   setRequestLocale(locale);
   const t = await getTranslations();
 
-  const role = await getServerRole();
+  const role = await getViewerRole();
   const user = await getCurrentUser();
 
   const metrics = [

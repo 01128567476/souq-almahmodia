@@ -36,13 +36,14 @@ import { verifyOtpCode, consumeOtpToken } from "@/services/repositories/otpRepos
 /** Password minimum length */
 const MIN_PASSWORD_LENGTH = 8;
 
-/** Password strength requirements */
+/** Password strength requirements — Production Requirements */
 function validatePassword(password: string): string | null {
   if (!password) return "Password is required";
   if (password.length < MIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
   if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
   if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
   if (!/[0-9]/.test(password)) return "Password must contain at least one number";
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) return "Password must contain at least one special character";
   return null;
 }
 
@@ -107,9 +108,9 @@ export async function POST(request: NextRequest) {
       // Hash the new password
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(newPassword, saltRounds);
-         const now = new Date();
+      const now = new Date();
 
- // Update user password, set hasPassword to true, AND set passwordChangedAt
+      // Update user password, set hasPassword to true, AND set passwordChangedAt
       // This enables BOTH Google OAuth AND email/password login
       // passwordChangedAt triggers JWT session invalidation on next request
       await tx

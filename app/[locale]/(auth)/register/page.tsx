@@ -13,7 +13,7 @@ import { useRouter } from "@/i18n/routing";
 import { Link } from "@/i18n/routing";
 import { cn } from "@/utils/cn";
 import { validateRegisterForm } from "@/lib/authValidation";
-import { register } from "@/services/authAPI";
+import { register, verifyRegistration } from "@/services/authAPI";
 import { OTPInput } from "@/components/auth/OTPInput";
 import { PasswordField } from "@/components/auth/PasswordField";
 
@@ -83,8 +83,9 @@ export default function RegisterPage() {
       // Move to verification step
       setStep(2);
       setVerificationSent(true);
-    } catch {
-      setErrors({ submit: "Registration failed. Please try again." });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Registration failed. Please try again.";
+      setErrors({ submit: message });
     } finally {
       setLoading(false);
     }
@@ -93,15 +94,19 @@ export default function RegisterPage() {
   const handleOTPComplete = async (code: string) => {
     setLoading(true);
     try {
-      // Verify code via API
-      const isValid = code === "123456"; // Mock verification
-      if (isValid) {
+      const result = await verifyRegistration({
+        email: formData.email,
+        otp: code,
+      });
+
+      if (result.success) {
         setStep(3);
       } else {
-        setErrors({ otp: "Invalid verification code. Try: 123456" });
+        setErrors({ otp: result.message || "Invalid verification code" });
       }
-    } catch {
-      setErrors({ otp: "Verification failed. Please try again." });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Verification failed. Please try again.";
+      setErrors({ otp: message });
     } finally {
       setLoading(false);
     }
@@ -414,6 +419,11 @@ export default function RegisterPage() {
                 t("signUp")
               )}
             </button>
+
+            {/* Submit error */}
+            {errors.submit && (
+              <p className="text-sm text-red-500 text-center mt-2">{errors.submit}</p>
+            )}
           </form>
 
           {/* Footer */}

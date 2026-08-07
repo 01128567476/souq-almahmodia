@@ -12,5 +12,5 @@ export default async function LoginPage({
   const { locale } = await params;
   const { next } = await searchParams;
   setRequestLocale(locale);
-  return <AuthForm initialMode="signin" next={next} />;
+  return <AuthForm initialMode="signin" next={next} locale={locale} />;
 }

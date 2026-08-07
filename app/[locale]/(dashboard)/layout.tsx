@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { setRequestLocale } from "next-intl/server";
 import { redirect } from "@/i18n/routing";
-import { getServerRole } from "@/lib/cookies";
+import { getViewerRole } from "@/lib/serverAuth";
 import { hasAtLeast } from "@/constants/roles";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
@@ -18,7 +18,7 @@ export default async function DashboardLayout({
   setRequestLocale(locale);
 
   // Defence in depth: middleware guards these routes too, but re-check on the server.
-  const role = await getServerRole();
+  const role = await getViewerRole();
   if (!hasAtLeast(role, "admin")) {
     redirect({ href: "/login", locale });
   }

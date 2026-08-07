@@ -1,7 +1,7 @@
 /**
  * POST /api/auth/resend-verification
  *
- * Resend a verification email to a user.
+ * Resend OTP verification code to a user.
  * Implements rate limiting to prevent abuse.
  *
  * Request body:
@@ -14,13 +14,13 @@
  * Security:
  * - Rate limited to 3 requests per 15 minutes per email
  * - Generic success message to prevent user enumeration
- * - Invalidates previous unused tokens (one token per resend)
+ * - Generates new OTP code (one-time use)
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createVerificationToken, invalidateUserTokens } from "@/services/repositories/verificationRepository";
-import { getSession, getViewerId } from "@/lib/serverAuth";
+import { createOtpToken } from "@/services/repositories/otpRepository";
 import { userRepository } from "@/services/repositories/userRepository";
+import { getEmailService } from "@/services/email/emailService";
 
 /** Rate limiting: max 3 resends per window */
 const MAX_RESENDS = 3;
@@ -51,27 +51,17 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { email } = body as { email?: string };
 
-    // If user is authenticated, use session email
-    let targetEmail = email;
-    if (!targetEmail) {
-      const session = await getSession();
-      if (session?.user?.email) {
-        targetEmail = session.user.email;
-      }
-    }
-
-    if (!targetEmail) {
+    if (!email) {
       return NextResponse.json(
         { success: false, message: "Email is required" },
         { status: 400 }
       );
     }
 
-    // Rate limit by email (unauthenticated) and by user ID (authenticated)
-    const viewerId = await getViewerId();
-    const rateIdentifier = viewerId ?? targetEmail;
-    
-    if (isRateLimited(rateIdentifier)) {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Rate limit by email
+    if (isRateLimited(normalizedEmail)) {
       return NextResponse.json(
         { success: false, message: "Too many requests. Please wait 15 minutes." },
         { status: 429 }
@@ -79,13 +69,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Find user by email
-    const user = await userRepository.getByEmail(targetEmail.toLowerCase().trim());
+    const user = await userRepository.getByEmail(normalizedEmail);
 
     // Always return success to prevent user enumeration
     if (!user) {
       return NextResponse.json({
         success: true,
-        message: "If the email exists in our system, a verification link has been sent.",
+        message: "If the email exists in our system, a verification code has been sent.",
       });
     }
 
@@ -97,29 +87,37 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Invalidate old tokens and create new one
-    await invalidateUserTokens(user.id);
-    const result = await createVerificationToken(user.id, user.email);
-
-    if (result.error) {
+    // Generate new OTP code
+    const otpResult = await createOtpToken(user.id, normalizedEmail, "verify");
+    if (!otpResult.success || !otpResult.code) {
       return NextResponse.json(
-        { success: false, message: "Failed to send verification email." },
+        { success: false, message: "Failed to generate verification code." },
         { status: 500 }
       );
     }
 
-    // TODO: Send verification email with token
-    // const verificationUrl = `${process.env.NEXTAUTH_URL}/api/auth/verify-email?token=${result.token}`;
-    // await sendVerificationEmail(user.email, verificationUrl);
+    // Send OTP via email
+    try {
+      const emailService = getEmailService();
+      await emailService.sendOtpEmail(
+        user.email,
+        otpResult.code,
+        "verify",
+        "en"
+      );
+    } catch (emailError) {
+      console.error("[RESEND_VERIFICATION] Email send failed:", emailError);
+      // Continue — still return success to prevent enumeration
+    }
 
     return NextResponse.json({
       success: true,
-      message: "If the email exists in our system, a verification link has been sent.",
+      message: "If the email exists in our system, a verification code has been sent.",
     });
   } catch (error) {
     console.error("[RESEND_VERIFICATION_ERROR]", error);
     return NextResponse.json(
-      { success: false, message: "Failed to send verification email." },
+      { success: false, message: "Failed to send verification code." },
       { status: 500 }
     );
   }

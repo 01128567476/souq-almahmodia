@@ -181,6 +181,7 @@
     "passwordUppercase": "Must contain at least one uppercase letter",
     "passwordLowercase": "Must contain at least one lowercase letter",
     "passwordNumber": "Must contain at least one number",
+    "loginError": "Invalid email or password",
     "invalidPhone": "Please enter a valid phone number",
     "usernameMinLength": "Username must be at least 3 characters",
     "usernameInvalid": "Username contains invalid characters (only English letters, numbers, _ - allowed)",

@@ -172,7 +172,7 @@ function VerifyCodeForm() {
       setLoading(true);
 
       try {
-        const result = await verifyResetCode(emailFromQuery, fullCode);
+        const result = await verifyResetCode({ email: emailFromQuery, code: fullCode });
 
         if (result.success) {
           router.push(`/reset-password?email=${encodeURIComponent(emailFromQuery)}&code=${encodeURIComponent(fullCode)}`);

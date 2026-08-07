@@ -16,13 +16,30 @@ export function validateEmail(email: string): string | null {
   return null;
 }
 
-/** Validate password strength */
+/**
+ * Validate password strength — Production Requirements
+ *
+ * Rules:
+ * - Minimum 8 characters
+ * - Maximum 128 characters
+ * - At least one uppercase letter
+ * - At least one lowercase letter
+ * - At least one number
+ * - At least one special character
+ *
+ * This validator is used ONLY for password creation flows:
+ * - Register
+ * - Reset Password
+ * - Change Password
+ */
 export function validatePassword(password: string): string | null {
   if (!password) return "requiredField";
   if (password.length < 8) return "passwordMinLength";
+  if (password.length > 128) return "passwordMaxLength";
   if (!/[A-Z]/.test(password)) return "passwordUppercase";
   if (!/[a-z]/.test(password)) return "passwordLowercase";
   if (!/[0-9]/.test(password)) return "passwordNumber";
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) return "passwordSpecial";
   return null;
 }
 

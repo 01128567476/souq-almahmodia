@@ -21,7 +21,6 @@ import {
   type ReactNode,
 } from "react";
 import type { Role } from "@/types";
-import { SESSION_COOKIE } from "@/constants/roles";
 
 /** User object returned by the session endpoint. */
 interface AuthUser {
@@ -73,9 +72,9 @@ async function fetchSession(): Promise<AuthUser | null> {
 
 /**
  * Call the login API endpoint.
- * On success, the session cookie is set server-side.
+ * On success, the session cookie is set server-side AND user data is returned.
  */
-async function callLogin(email: string, password: string): Promise<void> {
+async function callLogin(email: string, password: string): Promise<AuthUser> {
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -87,6 +86,13 @@ async function callLogin(email: string, password: string): Promise<void> {
     const json = await response.json().catch(() => ({}));
     throw new Error(json.message ?? "Login failed");
   }
+
+  const data = await response.json();
+  if (!data?.data?.user) {
+    throw new Error("Login succeeded but user data not received");
+  }
+
+  return data.data.user;
 }
 
 /**
@@ -109,16 +115,22 @@ async function callRegister(data: RegisterData): Promise<void> {
 
 /**
  * Call the logout API endpoint.
- * Revokes the session in the database and clears the cookie.
+ *
+ * The Auth.js session cookie is HttpOnly, so only the server can clear it —
+ * /api/auth/logout does that via signOut(). There is deliberately no
+ * client-side document.cookie cleanup here: it cannot touch an HttpOnly
+ * cookie, and doing it would only hide a failed server-side sign-out.
  */
 async function callLogout(): Promise<void> {
-  await fetch("/api/auth/logout", {
+  const response = await fetch("/api/auth/logout", {
     method: "POST",
     credentials: "include",
   });
 
-  // Clear cookie client-side too
-  document.cookie = `${SESSION_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+  if (!response.ok) {
+    const json = await response.json().catch(() => ({}));
+    throw new Error(json.message ?? "Logout failed");
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -138,9 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshSession]);
 
   const login = useCallback(async (email: string, password: string) => {
-    await callLogin(email, password);
-    // Refresh session after login
-    const sessionUser = await fetchSession();
+    const sessionUser = await callLogin(email, password);
     setUser(sessionUser);
   }, []);
 

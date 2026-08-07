@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { setRequestLocale, getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/routing";
-import { getServerRole } from "@/lib/cookies";
+import { getViewerRole } from "@/lib/serverAuth";
 import { hasAtLeast } from "@/constants/roles";
 import { AccountNav } from "./AccountNav";
 import type { Locale } from "@/i18n/routing";
@@ -17,7 +17,7 @@ export default async function AccountLayout({
   setRequestLocale(locale);
 
   // Defence in depth: middleware guards /account too, but re-check on the server.
-  const role = await getServerRole();
+  const role = await getViewerRole();
   if (!hasAtLeast(role, "user")) {
     redirect({ href: "/login", locale });
   }

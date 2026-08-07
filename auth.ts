@@ -86,45 +86,74 @@ const nextAuthConfig = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
+        console.log("[AUTH] authorize() entered");
+
         if (!credentials?.email || !credentials?.password) {
+          console.log("[AUTH] Missing email or password → returning null");
           return null;
         }
 
         const email = credentials.email as string;
         const password = credentials.password as string;
 
+        console.log(`[AUTH] email = ${email}`);
+        console.log(`[AUTH] password received = yes (length=${password.length})`);
+
         // Validate input
         const emailError = validateEmail(email);
         const passwordError = validatePassword(password);
         if (emailError !== null || passwordError !== null) {
+          console.log(`[AUTH] Validation failed → returning null (emailError=${emailError}, passwordError=${passwordError})`);
           return null;
         }
 
         // Look up user by email in PostgreSQL
         const user = await userRepository.getByEmail(email.toLowerCase().trim());
         if (!user) {
+          console.log("[AUTH] No user with this email → returning null");
           return null;
         }
+
+        console.log(`[AUTH] user found = true`);
+        console.log(`[AUTH] user.googleId = ${user.googleId}`);
+        console.log(`[AUTH] user.hasPassword = ${user.hasPassword}`);
+        console.log(`[AUTH] passwordHash exists = ${!!user.passwordHash}`);
 
         // Check if password is set (Google-only users cannot login via credentials)
         const hasPassword = await userRepository.hasPassword(user.id);
+        console.log(`[AUTH] hasPassword (DB check) = ${hasPassword}`);
         if (!hasPassword) {
-          // Google-only user trying to login with password
+          console.log("[AUTH] User has no password → returning null");
           return null;
         }
 
-        // Check if email is verified (required for login)
-        const emailVerified = user.emailVerified;
-        if (!emailVerified) {
-          // Unverified user trying to login
-          return null;
-        }
+        // NOTE: Per spec — login MUST ONLY validate  :
+        // 1. Email format
+        //   2. Password not empty
+        //   3. User exists
+        //   4. User has password set (hasPassword)
+        //   5. Password matches (bcrypt)
+        //
+        // emailVerified is NOT a login requirement.
+        // OTP verification during registration already proves email ownership.
+        //
 
         // Verify password hash
         const bcrypt = await import("bcryptjs");
         const valid = await bcrypt.compare(password, user.passwordHash!);
+        console.log(`[AUTH] bcrypt.compare result = ${valid}`);
         if (!valid) {
+          console.log("[AUTH] Password mismatch → returning null");
           return null;
+        }
+
+        console.log("[AUTH] Authentication successful → returning user");
+        console.log("[AUTH] authorize role =", user.role);
+
+        // GUARANTEE: role must never be null/undefined for credentials
+        if (!user.role) {
+          console.error("[AUTH] ERROR: role is null or undefined for credentials login!");
+          throw new Error("CRITICAL: User role is missing. Database may be corrupted.");
         }
 
         return {
@@ -257,7 +286,7 @@ const nextAuthConfig = {
         .where(eq(users.googleId as any, googleId))
         .limit(1);
 
-      if (userByGoogleId.length > 0) {
+       if (userByGoogleId.length > 0) {
         const existingUser = userByGoogleId[0];
         await db
           .update(users)
@@ -269,12 +298,15 @@ const nextAuthConfig = {
           .where(eq(users.id, existingUser.id));
 
         user.id = existingUser.id;
+        // Attach role for JWT propagation
+        (user as any).role = existingUser.role;
+        console.log("[AUTH] signIn (googleId match) role =", existingUser.role);
         return true;
       }
 
       // 2. Check if email already exists — link Google ID to existing user
-      const userByEmail = await userRepository.getByEmail(email);
-      if (userByEmail) {
+       const userByEmail = await userRepository.getByEmail(email);
+       if (userByEmail) {
         await db
           .update(users)
           .set({
@@ -287,6 +319,9 @@ const nextAuthConfig = {
           .where(eq(users.id, userByEmail.id));
 
         user.id = userByEmail.id;
+        // Attach role for JWT propagation
+        (user as any).role = userByEmail.role;
+        console.log("[AUTH] signIn (email link) role =", userByEmail.role);
         return true;
       }
 
@@ -310,14 +345,17 @@ const nextAuthConfig = {
         updatedAt: now,
       });
 
-      const createdUser = await userRepository.getByEmail(email);
-      if (!createdUser) {
-        return false;
-      }
+       const createdUser = await userRepository.getByEmail(email);
+       if (!createdUser) {
+         return false;
+       }
 
-      user.id = createdUser.id;
-      return true;
-    },
+       user.id = createdUser.id;
+       // Attach role for JWT propagation
+       (user as any).role = createdUser.role;
+       console.log("[AUTH] signIn (new user) role =", createdUser.role);
+       return true;
+     },
 
     /**
      * JWT callback — populate token and check session invalidation.
@@ -325,40 +363,83 @@ const nextAuthConfig = {
      * SESSION INVALIDATION:
      * If passwordChangedAt > token.iat, return null to reject session.
      */
-    async jwt({ token, user, trigger }: any) {
-      // Initial sign in — populate token with user data
-      if (user) {
-        token.id = user.id;
-        token.role = (user as { role?: Role }).role;
-        token.picture = (user as { image?: string }).image;
-        token.emailVerified = user.emailVerified;
-      }
+      async jwt({ token, user, trigger }: any) {
+        // Initial sign in — populate token with user data
+        if (user) {
+          token.id = user.id;
+          token.picture = (user as { image?: string }).image;
+          token.emailVerified = user.emailVerified;
 
-      // Session invalidation check — lazy-load DB
-      if (token?.id) {
-        try {
-          const { db } = await import("@/lib/db-server");
+          // CRITICAL: Auth.js v5 OAuth flow does NOT propagate signIn() mutations to jwt().
+          // We MUST re-fetch role from DB if user.role is missing.
+          if (user.role) {
+            token.role = user.role as Role;
+            console.log("[AUTH] jwt: role from user object =", token.role);
+          } else if (user.id) {
+            // Re-fetch role from database (lazy-load to avoid Edge Runtime bundling issues)
+            try {
+              const { db } = await import("@/lib/db-server");
+              const freshUser = await db
+                .select({ role: users.role })
+                .from(users)
+                .where(eq(users.id, user.id))
+                .limit(1);
 
-          const freshUser = await db
-            .select({
-              passwordChangedAt: users.passwordChangedAt,
-            })
-            .from(users)
-            .where(eq(users.id, token.id))
-            .limit(1);
-
-          if (freshUser.length > 0 && freshUser[0].passwordChangedAt) {
-            const passwordChangedAt = new Date(freshUser[0].passwordChangedAt);
-            const tokenIssuedAt = token.iat ? new Date(token.iat * 1000) : new Date(0);
-
-            if (passwordChangedAt > tokenIssuedAt) {
-              return null; // Reject session
+              if (freshUser.length > 0 && freshUser[0].role) {
+                token.role = freshUser[0].role as Role;
+                console.log("[AUTH] jwt: role re-fetched from DB =", token.role);
+              } else {
+                console.error("[AUTH] jwt ERROR: user exists but role not found in DB");
+                token.role = "user" as Role;
+              }
+            } catch (error) {
+              console.error("[AUTH] jwt ERROR: failed to fetch role from DB:", error);
+              token.role = "user" as Role;
             }
+          } else {
+            console.error("[AUTH] jwt ERROR: no user.id to fetch role");
+            token.role = "user" as Role;
           }
-        } catch (error) {
-          console.error("[JWT_CALLBACK] Error checking passwordChangedAt:", error);
         }
-      }
+
+        // Safety: ensure token.role is never undefined
+        if (!token.role) {
+          console.error("[AUTH] jwt ERROR: token.role still missing after all attempts");
+          token.role = "user" as Role;
+        }
+
+        console.log("[AUTH] jwt FINAL token.role =", token.role);
+
+        // Session invalidation check — MUST skip on initial sign-in
+        if (token?.id && !user) {
+          try {
+            const { db } = await import("@/lib/db-server");
+
+            const freshUser = await db
+              .select({
+                passwordChangedAt: users.passwordChangedAt,
+              })
+              .from(users)
+              .where(eq(users.id, token.id))
+              .limit(1);
+
+            if (freshUser.length > 0 && freshUser[0].passwordChangedAt) {
+              const passwordChangedAt = new Date(freshUser[0].passwordChangedAt);
+
+              // Only validate if token.iat exists
+              if (typeof token.iat === "number") {
+                const tokenIssuedAt = new Date(token.iat * 1000);
+
+                if (passwordChangedAt > tokenIssuedAt) {
+                  console.log("[AUTH] jwt: session invalidated (password changed)");
+                  return null;
+                }
+              }
+            }
+          } catch (error) {
+            console.error("[JWT_CALLBACK] Error checking passwordChangedAt:", error);
+          }
+        }
 
       return token;
     },
@@ -366,15 +447,16 @@ const nextAuthConfig = {
     /**
      * Session callback — shape session object for client.
      */
-    async session({ session, token }: any) {
-      if (session.user) {
-        (session.user as { id?: string }).id = (token as { id?: string }).id;
-        (session.user as { role?: Role }).role = token.role as Role;
-        (session.user as { image?: string }).image = (token as { picture?: string }).picture;
-        (session.user as { emailVerified?: string }).emailVerified = token.emailVerified;
-      }
-      return session;
-    },
+     async session({ session, token }: any) {
+       if (session.user) {
+         (session.user as { id?: string }).id = (token as { id?: string }).id;
+         (session.user as { role?: Role }).role = token.role as Role;
+         (session.user as { image?: string }).image = (token as { picture?: string }).picture;
+         (session.user as { emailVerified?: string }).emailVerified = token.emailVerified;
+       }
+       console.log("[AUTH] session role =", token.role);
+       return session;
+     },
   },
 
   // Events — audit logging

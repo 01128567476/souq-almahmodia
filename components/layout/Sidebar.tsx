@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Link } from "@/i18n/routing";
+import { Link, useRouter } from "@/i18n/routing";
 import { ROUTES } from "@/constants/routes";
 import { DASHBOARD_NAV, type NavItem } from "@/constants/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -11,6 +11,7 @@ import { cn } from "@/utils/cn";
 
 export function Sidebar() {
   const t = useTranslations();
+  const router = useRouter();
   const { logout } = useAuth();
   const { isActive } = useActiveRoute();
 
@@ -46,7 +47,10 @@ export function Sidebar() {
         </Link>
         <button
           type="button"
-          onClick={logout}
+          onClick={async () => {
+            await logout();
+            router.push(ROUTES.home);
+          }}
           className="flex items-center gap-md py-sm px-md text-on-surface-variant hover:bg-surface-container rounded-lg transition-all text-start"
         >
           <Icon name="logout" className="text-error" />

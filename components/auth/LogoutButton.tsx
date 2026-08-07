@@ -27,10 +27,14 @@ export function LogoutButton({
   const { logout } = useAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     setDialogOpen(false);
     router.push(ROUTES.home);
+    // Server components (dashboard/account gates) cache their RSC payload on
+    // the client. Without refresh() the stale authenticated tree can be
+    // re-served from the Router Cache after the cookie is already gone.
+    router.refresh();
   };
 
   const baseClass =

@@ -284,25 +284,42 @@ export class ResendEmailService implements IEmailService
     }
 
     try {
+      const from = options.to.length === 1
+        ? `${process.env.EMAIL_FROM_NAME || "stitch_souqna"} <${this.fromAddress}>`
+        : `${process.env.EMAIL_FROM_NAME || "stitch_souqna"} <${this.fromAddress}>`;
+
+      const body = {
+        from,
+        to: options.to,
+        subject: options.subject,
+        text: options.text,
+        html: options.html,
+      };
+
       const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${this.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          from: options.to.length === 1 ? `${process.env.EMAIL_FROM_NAME || "stitch_souqna"} <${this.fromAddress}>` : `${process.env.EMAIL_FROM_NAME || "stitch_souqna"} <${this.fromAddress}>`,
-          to: options.to,
-          subject: options.subject,
-          text: options.text,
-          html: options.html,
-        }),
+        body: JSON.stringify(body),
       });
 
+      const responseText = await response.text();
+
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("[EmailService] Resend API error:", errorText);
-        throw new Error(`Email send failed: ${response.statusText}`);
+        console.error("[EmailService] Resend API error:", response.status, responseText);
+        throw new Error(`Email send failed: ${response.status} ${response.statusText}`);
+      }
+
+      let responseData;
+      try {
+
+               responseData = JSON.parse(responseText); if (responseData.id) {
+          console.log("[EmailService] Email sent successfully, ID:", responseData.id);
+        }
+      } catch {
+        // Response is not JSON, ignore
       }
     } catch (error) {
       console.error("[EmailService] Failed to send email:", error);

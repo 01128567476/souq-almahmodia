@@ -100,7 +100,7 @@ function ResetPasswordForm() {
       try {
         const result = await resetPassword({
           email: emailFromQuery,
-          code: codeFromQuery,
+          otp: codeFromQuery,
           newPassword: password,
         });
 

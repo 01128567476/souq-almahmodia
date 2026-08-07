@@ -1,31 +1,25 @@
 /**
  * POST /api/auth/register
  *
- * Register a new user with email and password.
- * Creates user in PostgreSQL with emailVerificationRequired=true,
- * then sends verification email. User must verify email before login.
- *
- * Request body:
- * - fullName (required): Display name
- * - username (required): Unique username
- * - email (required): Unique email address
- * - phone (optional): Phone number
- * - password (required): Password (min 8 chars, must have upper, lower, number)
- *
- * Response:
- * - success: boolean
- * - message: string
+ * Registration flow with OTP verification.
  *
  * Flow:
- * 1. Validate inputs
+ * 1. Validate inputs (name, username, email, password)
  * 2. Check email/username uniqueness
- * 3. Create user with emailVerified = false
- * 4. Generate verification token
- * 5. Send verification email
- * 6. Return success (user must verify email before login)
+ * 3. Create user with emailVerified = null (must verify before login)
+ * 4. Generate 6-digit OTP code
+ * 5. Send OTP via email
+ * 6. Return success (user must verify OTP to complete registration)
  *
- * Note: User is NOT automatically logged in after registration.
- * They must verify their email first, then login normally.
+ * If email already exists:
+ * - hasPassword → "This email is already registered. Please sign in."
+ * - googleId → "This email is linked to Google. Sign in with Google."
+ *
+ * Security:
+ * - Rate limited to 5 requests per 1 hour per IP
+ * - Password is bcrypt hashed (rounds=12)
+ * - OTP is 6-digit numeric, expires in 5 minutes
+ * - User is created but emailVerified=null until OTP verification
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -33,11 +27,8 @@ import { db } from "@/lib/db-server";
 import { users } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { createVerificationToken } from "@/services/repositories/verificationRepository";
+import { createOtpToken } from "@/services/repositories/otpRepository";
 import { getEmailService } from "@/services/email/emailService";
-
-/** Password minimum requirements */
-const MIN_PASSWORD_LENGTH = 8;
 
 /** Validate email format */
 function validateEmail(email: string): string | null {
@@ -55,13 +46,15 @@ function validateUsername(username: string): string | null {
   return null;
 }
 
-/** Validate password strength */
+/** Validate password strength — Production Requirements */
 function validatePassword(password: string): string | null {
   if (!password) return "Password is required";
-  if (password.length < MIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
+  if (password.length < 8) return "Password must be at least 8 characters";
+  if (password.length > 128) return "Password must be at most 128 characters";
   if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
   if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
   if (!/[0-9]/.test(password)) return "Password must contain at least one number";
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) return "Password must contain at least one special character";
   return null;
 }
 
@@ -112,7 +105,7 @@ export async function POST(request: NextRequest) {
     const phone = raw.phone ?? "";
     const password = raw.password ?? "";
 
-    // Rate limit by IP (use remote address or IP from headers)
+    // Rate limit by IP
     const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
     if (isRateLimited(ip)) {
       return NextResponse.json(
@@ -154,38 +147,59 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Hash password with bcrypt (salt rounds = 12 for production)
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    // Use a transaction to ensure atomicity
     const normalizedEmail = email.trim().toLowerCase();
     const usernameLower = username.trim().toLowerCase();
 
+    // Step 1: Check if email already exists
+    const existingByEmail = await db
+      .select({
+        id: users.id,
+        googleId: users.googleId,
+        hasPassword: users.hasPassword,
+      })
+      .from(users)
+      .where(eq(users.email, normalizedEmail))
+      .limit(1);
+
+    if (existingByEmail.length > 0) {
+      const existing = existingByEmail[0];
+      if (existing.hasPassword) {
+        return NextResponse.json(
+          { success: false, message: "This email is already registered. Please sign in instead." },
+          { status: 409 }
+        );
+      }
+      if (existing.googleId) {
+        return NextResponse.json(
+          { success: false, message: "This email is already linked to a Google account. Please sign in with Google or set a password first." },
+          { status: 409 }
+        );
+      }
+      // Fallback: email exists but no password and no googleId
+      return NextResponse.json(
+        { success: false, message: "This email is already registered." },
+        { status: 409 }
+      );
+    }
+
+    // Step 2: Check if username already exists
+    const existingByUsername = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.usernameLower, usernameLower))
+      .limit(1);
+
+    if (existingByUsername.length > 0) {
+      return NextResponse.json(
+        { success: false, message: "Username already taken" },
+        { status: 409 }
+      );
+    }
+
+    // Step 3: Hash password, create user, generate OTP (all in transaction)
+    const passwordHash = await bcrypt.hash(password, 12);
+
     const result = await db.transaction(async (tx) => {
-      // Check if email already exists (case-insensitive)
-      const existingByEmail = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.email, normalizedEmail))
-        .limit(1);
-
-      if (existingByEmail.length > 0) {
-        return { error: "Email already registered" };
-      }
-
-      // Check if username already exists (case-insensitive)
-      const existingByUsername = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.usernameLower, usernameLower))
-        .limit(1);
-
-      if (existingByUsername.length > 0) {
-        return { error: "Username already taken" };
-      }
-
-      // Create user with emailVerified = false
-      // hasPassword = true (this is a regular registration)
       const now = new Date();
       const [user] = await tx
         .insert(users)
@@ -197,54 +211,51 @@ export async function POST(request: NextRequest) {
           phone: phone.trim() || null,
           passwordHash: passwordHash,
           hasPassword: true,
-          emailVerified: null, // User must verify email before login
-          role: "user",
+          emailVerified: null, // Must verify before login
+          role: "user" as const,
           createdAt: now,
           updatedAt: now,
         })
         .returning();
 
       if (!user) {
-        return { error: "Failed to create user" };
+        throw new Error("Failed to create user");
       }
 
-      // Generate verification token
-      const tokenResult = await createVerificationToken(user.id, normalizedEmail);
-      if (tokenResult.error) {
-        return { error: "Failed to generate verification token" };
+      // Generate OTP for email verification
+      const otpResult = await createOtpToken(user.id, normalizedEmail, "email");
+      if (!otpResult.success || !otpResult.code) {
+        throw new Error("Failed to generate OTP code");
       }
 
-      return { user, verificationToken: tokenResult.token };
+      return { user, otpCode: otpResult.code };
     });
 
-    if ("error" in result) {
+    if (!result || !result.user) {
       return NextResponse.json(
-        { success: false, message: result.error },
-        { status: 409 }
+        { success: false, message: "Failed to create user" },
+        { status: 500 }
       );
     }
 
-    // Send verification email
+    // Send OTP via email
     try {
       const emailService = getEmailService();
-      const verificationUrl = `${process.env.NEXTAUTH_URL}/api/auth/verify-email?token=${result.verificationToken}`;
-      
-      // For verification email, we just need to send the URL
-      await emailService.sendVerificationEmail(
+      await emailService.sendOtpEmail(
         result.user.email,
-        result.verificationToken,
+        result.otpCode,
+        "verify",
         "en"
       );
     } catch (emailError) {
-      console.error("[REGISTER] Email send failed:", emailError);
-      // Continue even if email fails — user can resend later
+      console.error("[REGISTER] OTP email send failed:", emailError);
+      // Continue even if email fails — user can request resend
     }
 
-    // User is NOT logged in — they must verify email first
     return NextResponse.json(
       {
         success: true,
-        message: "Registration successful. Please check your email to verify your account.",
+        message: "Registration successful. Please check your email for the verification code.",
       },
       { status: 201 }
     );

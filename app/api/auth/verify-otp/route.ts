@@ -53,20 +53,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify the code (checks expiration, rate limit)
+    // Verify the code only (checks expiration, rate limit, hash match)
+    // NOTE: We DO NOT consume the OTP here. The OTP is consumed only when
+    // the password is actually reset in /api/auth/reset-password.
+    // This prevents the "double consume" bug where verify-otp consumes the
+    // OTP and then reset-password fails because it's already used.
     const verifyResult = await verifyOtpCode(user.id, code, "email");
     if (!verifyResult.success) {
       return NextResponse.json(
         { success: false, message: verifyResult.error || "Invalid OTP code" },
-        { status: 400 }
-      );
-    }
-
-    // Consume the token (mark as used — one-time)
-    const consumeResult = await consumeOtpToken(user.id, code, "email");
-    if (!consumeResult.success) {
-      return NextResponse.json(
-        { success: false, message: consumeResult.error || "OTP verification failed" },
         { status: 400 }
       );
     }

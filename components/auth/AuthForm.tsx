@@ -15,6 +15,16 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+/** Password strength validation — returns error key or null */
+function validatePasswordStrength(password: string): string | null {
+  if (!password) return "requiredField";
+  if (password.length < 8) return "passwordMinLength";
+  if (!/[A-Z]/.test(password)) return "passwordUppercase";
+  if (!/[a-z]/.test(password)) return "passwordLowercase";
+  if (!/[0-9]/.test(password)) return "passwordNumber";
+  return null;
+}
+
 /** Social provider button component */
 function SocialButton({
   provider,
@@ -109,11 +119,15 @@ function InputField({
 export function AuthForm({
   initialMode = "signin",
   next: nextProp,
+  locale: localeProp,
 }: {
   initialMode?: Mode;
   /** Post-login destination, read from the `?next=` param by the server page. */
   next?: string;
+  /** Locale prefix for redirect (e.g. "ar", "en"). */
+  locale?: string;
 }) {
+  const locale = localeProp ?? "ar";
   const t = useTranslations("auth");
   const { login } = useAuth();
   const router = useRouter();
@@ -123,11 +137,17 @@ export function AuthForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
 
+  // Unverified user state
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const next = sanitizeNext(nextProp);
+  const [redirecting, setRedirecting] = useState(false);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    
+
     // Clear previous errors
     setErrors({});
     setLoading(true);
@@ -144,8 +164,19 @@ export function AuthForm({
       newErrors.email = t("invalidEmail");
     }
 
-    if (!password) {
-      newErrors.password = t("requiredField");
+    // NOTE: Password strength rules apply ONLY to password creation.
+    // Login is authentication only — accept any non-empty password.
+    if (mode === "signup") {
+      const pwError = validatePasswordStrength(password);
+      if (pwError && pwError !== "requiredField") {
+        newErrors.password = t(pwError);
+      } else if (!password) {
+        newErrors.password = t("requiredField");
+      }
+    } else {
+      if (!password) {
+        newErrors.password = t("requiredField");
+      }
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -154,12 +185,88 @@ export function AuthForm({
       return;
     }
 
-    // Call real login API
-    const requested = next ?? ROUTES.account;
-    const needed = requiredRoleFor(requested.split("?")[0]);
-    const target = needed === "admin" ? ROUTES.account : requested;    
-    await login(email, password);
-    router.push(target);
+    try {
+      // Step 1: Call login API — sets session cookie server-side
+      await login(email, password);
+
+      // Step 2: Fetch fresh session to get the actual role (avoid race condition)
+      // The session cookie was just set, so this will return the authenticated user
+      const sessionResponse = await fetch("/api/auth/session", {
+        credentials: "include",
+      });
+
+      if (!sessionResponse.ok) {
+        throw new Error("Failed to fetch session after login");
+      }
+
+      const sessionData = await sessionResponse.json();
+      const sessionUser = sessionData?.data?.user;
+
+      if (!sessionUser?.role) {
+        throw new Error("Role missing in session after login");
+      }
+
+      // Step 3: Redirect based on ACTUAL role from server
+      setRedirecting(true);
+
+      if (sessionUser.role === "admin") {
+        window.location.href = `/${locale}/dashboard`;
+      } else {
+        window.location.href = `/${locale}/account`;
+      }
+    } catch (err: any) {
+      // Check if user needs email verification (status 403)
+      const responseData = err?.response?.data || {};
+      
+      if (responseData.needsVerification) {
+        setUnverifiedEmail(responseData.email || email);
+        setErrors({ 
+          form: responseData.message || "Your email address has not been verified. Please check your inbox." 
+        });
+      } else {
+        const errorMessage = err?.message || t("loginError") || "Login failed. Please try again.";
+        setErrors({ form: errorMessage });
+      }
+      setLoading(false);
+    }
+  };
+
+  /** Handle resend verification code */
+  const handleResendVerification = async () => {
+    if (!unverifiedEmail || resendCooldown > 0) return;
+    
+    setResendLoading(true);
+    try {
+      const response = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: unverifiedEmail }),
+      });
+
+      const data = await response.json();
+      
+      if (response.ok) {
+        setErrors({ 
+          form: `Verification code sent to ${unverifiedEmail}. Please check your inbox.` 
+        });
+        setResendCooldown(60);
+        const interval = setInterval(() => {
+          setResendCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(interval);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      } else {
+        setErrors({ form: data.message || "Failed to resend verification code." });
+      }
+    } catch {
+      setErrors({ form: "Failed to resend verification code." });
+    } finally {
+      setResendLoading(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -169,7 +276,6 @@ export function AuthForm({
   };
 
   const handleAppleSignIn = async () => {
-    // Apple OAuth not yet configured - placeholder for future
     setOauthLoading("apple");
     console.log("Apple OAuth not yet configured");
   };
@@ -367,6 +473,44 @@ export function AuthForm({
                 ),
               })}
             </label>
+          </div>
+        )}
+
+        {/* Unverified user banner */}
+        {unverifiedEmail && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm text-amber-800 font-medium mb-1">
+                  Email not verified
+                </p>
+                <p className="text-xs text-amber-700 mb-2">
+                  A verification code was sent to {unverifiedEmail}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={resendLoading || resendCooldown > 0}
+                  className="text-sm font-medium text-amber-600 hover:text-amber-700 disabled:text-amber-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {resendCooldown > 0
+                    ? `Resend code (${resendCooldown}s)`
+                    : resendLoading
+                    ? "Sending..."
+                    : "Resend verification code"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Global error message */}
+        {errors.form && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 animate-in fade-in slide-in-from-top-2">
+            {errors.form}
           </div>
         )}
 

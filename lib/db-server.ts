@@ -5,9 +5,8 @@
  * Use `@/lib/db` for schema-only exports instead.
  */
 
-import { drizzle } from "drizzle-orm/node-postgres";
-import { neon } from "@neondatabase/serverless";
-import pg from "pg";
+import { drizzle } from "drizzle-orm/neon-serverless";
+import { Pool } from "@neondatabase/serverless";
 import * as schema from "@/drizzle/schema";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -20,45 +19,28 @@ if (!DATABASE_URL) {
 }
 
 /**
- * Connection configuration for PostgreSQL.
- * - Neon serverless: Use @neondatabase/serverless (optimized for serverless/edge)
- * - Regular PostgreSQL: Use connection pool with pg
+ * Connection configuration for Neon serverless.
+ * Uses @neondatabase/serverless Pool (WebSocket-based) + drizzle-orm/neon-serverless
  */
 const isNeon = DATABASE_URL?.includes(".neon.tech") ?? false;
 
-let pool: pg.Pool | null = null;
-let poolError: Error | null = null;
-
-// For non-Neon databases, create a connection pool with proper timeouts
-if (DATABASE_URL && !isNeon) {
+// For Neon: use @neondatabase/serverless Pool (WebSocket-based connection pool)
+let neonPool: Pool | null = null;
+if (DATABASE_URL && isNeon) {
   try {
-    pool = new pg.Pool({
+    neonPool = new Pool({
       connectionString: DATABASE_URL,
-      connectionTimeoutMillis: 10000, // 10s timeout
-            idleTimeoutMillis: 30000, // 30s idle
-      max: 5,                         // Max pool size
+      connectionTimeoutMillis: 10000,
     });
-
-    // Listen for pool errors
-     pool.on("error", (err) => {
-     console.error("⚠️  Unexpected error on idle database pool:", err);
-      poolError = err as Error;
-    });
-
-    pool.on("connect", () => {
-      console.log("✅ Database pool connected successfully");
-    });
-  } catch (err) {
-    console.error("❌ Failed to initialize database pool:", err);
-    poolError = err as Error;
+    console.log("✅ Neon pool connected successfully");
+   } catch (err) {
+   console.error("❌ Failed to initialize Neon pool:", err);
   }
 }
 
-// Drizzle ORM instance
-// For Neon: use @neondatabase/serverless (works better with Next.js serverless functions)
-// For regular PostgreSQL: use connection pool
+// Drizzle ORM instance using native neon-serverless adapter
 export const db = isNeon
-  ? drizzle(DATABASE_URL!, { schema }) // drizzle-orm/node-postgres can use the URL directly with Neon
-  : (pool ? drizzle(pool, { schema }) : drizzle(DATABASE_URL!, { schema }));
+  ? (neonPool ? drizzle(neonPool, { schema }) : drizzle(DATABASE_URL!))
+  : drizzle(DATABASE_URL!);
 
 export type Database = typeof db;

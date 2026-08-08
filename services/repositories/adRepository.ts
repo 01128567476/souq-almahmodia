@@ -69,11 +69,12 @@ async function loadImagesBatch(productIds: string[]): Promise<Map<string, { prim
 
 /**
  * Map images to a single product from the batch result.
+ * Derives `image` from images[0] so UI always has a primary image URL when images exist.
  */
 function applyImagesToProduct(product: Product, imageData: { primary: string | null; images: string[] }): Product {
   return {
     ...product,
-    image: imageData.primary ?? "",
+    image: imageData.images?.[0] ?? "",
     images: imageData.images,
   };
 }
@@ -252,6 +253,23 @@ export const adRepository = {
 
     const baseAds = rows.map(mapRowToProduct);
     const ads = await Promise.all(baseAds.map((ad) => mapImagesToProduct(ad.id, ad)));
+
+    // Debug: verify images are loaded (show first 3 ads as sample)
+    const sample = ads.slice(0, 3);
+    for (const ad of sample) {
+      const imgCount = ad.images?.length ?? 0;
+      console.log(`[ADS] Ad ${ad.id}:`, {
+        title: ad.title,
+        image: ad.image,
+        images: ad.images,
+        imageCount: imgCount,
+        hasImage: !!ad.image,
+        hasImages: imgCount > 0,
+        imagesMatchImage: ad.image === ad.images?.[0],
+      });
+    }
+    console.log(`[ADS] Total public ads: ${ads.length}`);
+
     return clone(ads);
   },
 
@@ -467,6 +485,16 @@ export const adRepository = {
 
   async create(input: AdCreateInput, actor: Actor): Promise<Product> {
     const now = new Date().toISOString();
+
+    // Validate images: reject blob:, data:, base64 URLs
+    const images = input.images ?? [];
+    const invalidImages = images.filter(
+      (img) => img.startsWith("blob:") || img.startsWith("data:") || img.startsWith("base64")
+    );
+    if (invalidImages.length > 0) {
+      throw new Error("Invalid image URLs detected. Please re-upload your images.");
+    }
+
     const adValues = {
       title: input.title,
       categorySlug: input.categorySlug,
@@ -494,6 +522,20 @@ export const adRepository = {
       .values(adValues)
       .returning();
 
+    // Store images in ad_images table (single source of truth)
+    if (images.length > 0) {
+      const imageRecords = images.map((imgUrl, idx) => ({
+        adId: result[0].id,
+        imageUrl: imgUrl,
+        sortOrder: idx,
+        isPrimary: idx === 0,
+      }));
+      await db.insert(adImages).values(imageRecords);
+    }
+
+    console.log("[AD_CREATE] Stored ad:", result[0].id, "with", images.length, "images");
+    console.log("[AD_CREATE] Image URLs:", images);
+
     const baseAd = mapRowToProduct(result[0]);
     const ad = await mapImagesToProduct(baseAd.id, baseAd);
 
@@ -519,6 +561,28 @@ export const adRepository = {
     if (patch.condition !== undefined) updateSet.condition = patch.condition;
     if (patch.location !== undefined) updateSet.location = patch.location;
     if (patch.sellerPhone !== undefined) updateSet.sellerPhone = patch.sellerPhone;
+    if (patch.images !== undefined) {
+      // Validate images: reject blob:, data:, base64
+      const invalidImages = patch.images.filter(
+        (img: string) => img.startsWith("blob:") || img.startsWith("data:") || img.startsWith("base64")
+      );
+      if (invalidImages.length > 0) {
+        throw new Error("Invalid image URLs detected. Please re-upload your images.");
+      }
+      // Replace all images in ad_images table (single source of truth)
+      await db
+        .delete(adImages)
+        .where(eq(adImages.adId, id));
+      if (patch.images.length > 0) {
+        const imageRecords = patch.images.map((imgUrl: string, idx: number) => ({
+          adId: id,
+          imageUrl: imgUrl,
+          sortOrder: idx,
+          isPrimary: idx === 0,
+        }));
+        await db.insert(adImages).values(imageRecords);
+      }
+    }
     if (patch.adminNotes !== undefined) updateSet.adminNotes = patch.adminNotes;
     if (patch.rejectionReason !== undefined) updateSet.rejectionReason = patch.rejectionReason;
 
@@ -808,31 +872,31 @@ function mapRowToProduct(row: typeof products.$inferSelect): Product {
   const createdAtMs = row.createdAt?.getTime() ?? new Date().getTime();
   const postedAgoHours = Math.floor((Date.now() - createdAtMs) / 3600000);
 
-  return {
-    id: row.id,
-    title: row.title,
-    categorySlug: row.categorySlug,
-    description: row.description ?? undefined,
-    price: row.price != null ? parseFloat(row.price) : 0,
-    currency: row.currency ?? "SAR",
-    condition: row.condition,
-    location: row.location,
-    sellerName: row.sellerName,
-    sellerPhone: row.sellerPhone,
-    status: row.status,
-    ownerId: row.ownerId,
-    featured: row.featured ?? false,
-    pinned: row.pinned ?? false,
-    pinnedAt: row.pinnedAt != null ? row.pinnedAt.toISOString() : undefined,
-    createdAt: row.createdAt?.toISOString() ?? new Date().toISOString(),
-    updatedAt: row.updatedAt?.toISOString() ?? new Date().toISOString(),
-    expiresAt: row.expiresAt?.toISOString() ?? undefined,
-    rejectionReason: row.rejectionReason ?? undefined,
-    adminNotes: row.adminNotes ?? undefined,
-    postedAgoHours,
-    image: "",
-    images: [],
-  };
+    return {
+      id: row.id,
+      title: row.title,
+      categorySlug: row.categorySlug,
+      description: row.description ?? undefined,
+      price: row.price != null ? parseFloat(row.price) : 0,
+      currency: row.currency ?? "SAR",
+      condition: row.condition,
+      location: row.location,
+      sellerName: row.sellerName,
+      sellerPhone: row.sellerPhone,
+      status: row.status,
+      ownerId: row.ownerId,
+      featured: row.featured ?? false,
+      pinned: row.pinned ?? false,
+      pinnedAt: row.pinnedAt != null ? row.pinnedAt.toISOString() : undefined,
+      createdAt: row.createdAt?.toISOString() ?? new Date().toISOString(),
+      updatedAt: row.updatedAt?.toISOString() ?? new Date().toISOString(),
+      expiresAt: row.expiresAt?.toISOString() ?? undefined,
+      rejectionReason: row.rejectionReason ?? undefined,
+      adminNotes: row.adminNotes ?? undefined,
+      postedAgoHours,
+      image: "",
+      images: [],
+    };
 }
 
 /** Transition with image mapping — used by approve, reject, hide, etc. */
@@ -995,16 +1059,16 @@ async function getCategoryNameMap(): Promise<Map<string, string>> {
 export async function runExpiryCleanup(): Promise<
   Record<"expired" | "deleted", number>
 > {
-  const now = Date.now();
+  const now = new Date();
 
-  // Find expired ads
+  // Find expired ads using Drizzle ORM (safe, parameterized)
   const expiredRows = await db
     .select({ id: products.id })
     .from(products)
     .where(
       and(
         sql`${products.expiresAt} IS NOT NULL`,
-        sql`EXTRACT(EPOCH FROM ${products.expiresAt}) * 1000 <= ${now}`,
+        sql`EXTRACT(EPOCH FROM ${products.expiresAt}) * 1000 <= ${now.getTime()}`,
         sql`${products.status} != 'deleted'`
       )
     );
@@ -1015,27 +1079,27 @@ export async function runExpiryCleanup(): Promise<
 
   const expiredIds = expiredRows.map((r) => r.id);
 
-  // Delete related reports
+  // Delete related notifications using proper Drizzle ORM
   await db
     .delete(notifications)
     .where(
       and(
-        sql`"type" = 'ad_expired'`,
-        sql`"ad_id" IN (${expiredIds.join(",")})`
+        eq(notifications.type, "ad_expired" as any),
+        inArray(notifications.adId, expiredIds)
       )
     );
 
-  // Mark ads as deleted
+  // Mark ads as deleted using proper Drizzle ORM
   await db
     .update(products)
-    .set({ status: "deleted", updatedAt: new Date() })
-    .where(sql`${products.id} IN (${expiredIds.join(",")})`);
+    .set({ status: "deleted" as AdStatus, updatedAt: new Date() })
+    .where(inArray(products.id, expiredIds));
 
   return { expired: expiredIds.length, deleted: expiredIds.length };
 }
 
 export async function countExpiredAds(): Promise<number> {
-  const now = Date.now();
+  const now = new Date();
 
   const rows = await db
     .select({ count: sql<number>`COUNT(*)` })
@@ -1043,7 +1107,7 @@ export async function countExpiredAds(): Promise<number> {
     .where(
       and(
         sql`${products.expiresAt} IS NOT NULL`,
-        sql`EXTRACT(EPOCH FROM ${products.expiresAt}) * 1000 <= ${now}`,
+        sql`EXTRACT(EPOCH FROM ${products.expiresAt}) * 1000 <= ${now.getTime()}`,
         sql`${products.status} != 'deleted'`
       )
     );

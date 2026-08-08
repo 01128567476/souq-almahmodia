@@ -121,9 +121,16 @@ export function ProductCard({
       {/* Fixed-height image area — ~25-30% shorter than aspect-square, preserving rounded top corners
           Mobile (<640px): 150px | Tablet (640px+): 170px | Desktop (768px+): 190px */}
       <div className="relative overflow-hidden bg-surface-container-low h-[150px] sm:h-[170px] md:h-[190px]">
+        {/* Debug: log image fields for troubleshooting */}
+        {process.env.NODE_ENV === "development" && (
+          <div style={{ display: "none" }} data-product-id={product.id}
+            data-image={product.image}
+            data-images={JSON.stringify(product.images)}
+          />
+        )}
         <Link href={ROUTES.product(product.id)} className="block h-full w-full">
           <SafeProductImage
-            src={product.image}
+            src={product.image || product.images?.[0] || "/placeholder-image.svg"}
             alt={product.title}
             fill
             className="group-hover:scale-105 transition-transform duration-500"

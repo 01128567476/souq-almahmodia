@@ -16,9 +16,8 @@
  * Production-only. No mock data. No temporary code.
  * User identity derived from Auth.js session.
  *
- * CRITICAL: All mutation + read operations use a transaction to prevent
+ * All mutation + read operations use a transaction to prevent
  * read-after-write inconsistency from Neon connection pooling.
- * The summary is computed inside the transaction on the SAME connection.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -85,13 +84,12 @@ export async function GET(
     const { id } = await params;
     const viewerId = _request.nextUrl.searchParams.get("viewerId");
 
-    // GET still uses the repository (no mutation, so stale read is not critical)
     const { reactionRepository } = await import("@/services/repositories/reactionRepository");
     const summary = await reactionRepository.getSummary(id, viewerId || null);
 
     return NextResponse.json({ summary });
   } catch {
-    return NextResponse.json(EMPTY_SUMMARY);
+    return NextResponse.json({ summary: EMPTY_SUMMARY });
   }
 }
 
@@ -107,7 +105,6 @@ export async function POST(
     const { id } = await params;
     const remove = request.nextUrl.searchParams.get("remove") === "true";
 
-    // Derive userId from Auth.js session (not from client)
     const currentUser = await getCurrentUser();
     if (!currentUser) {
       return NextResponse.json(
@@ -119,23 +116,16 @@ export async function POST(
     const userId = currentUser.id;
 
     // ALL mutation + read operations run in a single transaction
-    // This guarantees they execute on the SAME database connection
-    // with proper isolation — eliminating read-after-write inconsistency.
     const summary = await db.transaction(async (tx) => {
       if (remove) {
-        console.log("[REACTION_API] REMOVE start — adId:", id, "userId:", userId);
-
-        const result = await tx
+        await tx
           .delete(reactions)
           .where(
             and(
               eq(reactions.adId, id),
               eq(reactions.userId, userId),
             ),
-          )
-          .returning({ type: reactions.type, userId: reactions.userId });
-
-        console.log("[REACTION_API] REMOVE affected rows:", result.length);
+          );
 
         // Read summary on the SAME transaction connection
         const allRows = await tx
@@ -143,10 +133,7 @@ export async function POST(
           .from(reactions)
           .where(eq(reactions.adId, id));
 
-        const summary = buildSummary(allRows as any, userId);
-        console.log("[REACTION_API] REMOVE summary:", JSON.stringify(summary));
-
-        return summary;
+        return buildSummary(allRows as any, userId);
       }
 
       // Upsert path
@@ -162,8 +149,6 @@ export async function POST(
         throw new Error("Invalid reaction type");
       }
 
-      console.log("[REACTION_API] UPSERT start — adId:", id, "userId:", userId, "type:", reactionType);
-
       await tx
         .insert(reactions)
         .values({
@@ -176,18 +161,13 @@ export async function POST(
           set: { type: reactionType },
         });
 
-      console.log("[REACTION_API] UPSERT complete. Reading summary...");
-
       // Read summary on the SAME transaction connection
       const allRows = await tx
         .select({ type: reactions.type, userId: reactions.userId })
         .from(reactions)
         .where(eq(reactions.adId, id));
 
-      const summary = buildSummary(allRows as any, userId);
-      console.log("[REACTION_API] UPSERT summary:", JSON.stringify(summary));
-
-      return summary;
+      return buildSummary(allRows as any, userId);
     });
 
     return NextResponse.json({ summary });

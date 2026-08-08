@@ -207,7 +207,14 @@ export function AllAdsView({
       cell: (ad) => (
         <div className="flex items-center gap-3">
           <div className="relative h-12 w-12 overflow-hidden rounded-2xl bg-surface-container-lowest">
-            <Image src={ad.image} alt={ad.title} fill sizes="48px" className="object-cover" />
+            <Image
+              src={ad.image}
+              alt={ad.title}
+              fill
+              sizes="48px"
+              className="object-cover"
+              onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+            />
           </div>
           <div>
             <div className="font-medium text-on-surface">{ad.title}</div>

@@ -112,7 +112,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
             <p className="mb-2 text-label-sm font-label-sm text-on-surface-variant">{t("logoPreview")}</p>
             <div className="h-28 overflow-hidden rounded-3xl bg-surface-container-highest">
               {settings.logoUrl ? (
-                <Image src={settings.logoUrl} alt={t("logoUrl")} fill className="object-cover" />
+                <Image src={settings.logoUrl} alt={t("logoUrl")} fill className="object-cover" onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }} />
               ) : (
                 <div className="flex h-full items-center justify-center text-on-surface-variant">{t("noPreview")}</div>
               )}
@@ -122,7 +122,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
             <p className="mb-2 text-label-sm font-label-sm text-on-surface-variant">{t("bannerPreview")}</p>
             <div className="h-28 overflow-hidden rounded-3xl bg-surface-container-highest">
               {settings.bannerUrl ? (
-                <Image src={settings.bannerUrl} alt={t("bannerUrl")} fill className="object-cover" />
+                <Image src={settings.bannerUrl} alt={t("bannerUrl")} fill className="object-cover" onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }} />
               ) : (
                 <div className="flex h-full items-center justify-center text-on-surface-variant">{t("noPreview")}</div>
               )}

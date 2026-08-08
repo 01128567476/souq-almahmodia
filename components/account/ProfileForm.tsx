@@ -44,7 +44,7 @@ export function ProfileForm() {
         <div className="flex items-center gap-lg">
           <div className="relative w-20 h-20 rounded-full overflow-hidden bg-surface-container shrink-0">
             {user?.avatar && (
-              <Image src={user.avatar} alt="" fill sizes="80px" className="object-cover" />
+              <Image src={user.avatar} alt="" fill sizes="80px" className="object-cover" onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }} />
             )}
           </div>
           <button

@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/expiry",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cleanup-unverified",
+      "schedule": "0 2 * * *"
+    }
+  ],
+  "functions": {
+    "app/api/**/*.ts": {
+      "maxDuration": 10
+    },
+    "app/api/cron/**/*.ts": {
+      "maxDuration": 300
+    }
+  }
+}

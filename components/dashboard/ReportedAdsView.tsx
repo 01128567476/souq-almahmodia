@@ -102,7 +102,14 @@ export function ReportedAdsView({
             <article key={ad.id} className="overflow-hidden rounded-[2rem] border border-outline-variant bg-surface-container-low">
               <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
                 <div className="relative h-72 lg:h-full bg-surface-container-lowest">
-                  <Image src={ad.image} alt={ad.title} fill sizes="(max-width: 1024px) 100vw, 320px" className="object-cover" />
+                  <Image
+                    src={ad.image}
+                    alt={ad.title}
+                    fill
+                    sizes="(max-width: 1024px) 100vw, 320px"
+                    className="object-cover"
+                    onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+                  />
                 </div>
                 <div className="p-lg md:p-xl">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">

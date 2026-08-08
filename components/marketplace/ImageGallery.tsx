@@ -21,6 +21,7 @@ export function ImageGallery({ images, alt }: { images: string[]; alt: string })
           sizes="(max-width: 1024px) 100vw, 50vw"
           className="object-cover"
           priority
+          onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
         />
       </div>
 
@@ -38,7 +39,7 @@ export function ImageGallery({ images, alt }: { images: string[]; alt: string })
                 i === active ? "border-primary" : "border-outline-variant hover:border-outline",
               )}
             >
-              <Image src={src} alt="" fill sizes="80px" className="object-cover" />
+              <Image src={src} alt="" fill sizes="80px" className="object-cover" onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }} />
             </button>
           ))}
         </div>

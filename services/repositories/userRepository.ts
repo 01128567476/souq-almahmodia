@@ -19,7 +19,7 @@ import { recordAudit, type RecordInput } from "@/services/repositories/auditRepo
 
 import { db } from "@/lib/db-server";
 import { users, products } from "@/drizzle/schema";
-import { eq, count, sql } from "drizzle-orm";
+import { eq, count, sql, like, and, ilike, sql as sqlRaw } from "drizzle-orm";
 
 /* ======================================================================== */
 /* Helpers                                                                  */
@@ -71,6 +71,7 @@ export const userRepository = {
    * List all users (admin directory).
    * Returns DirectoryUser view models with computed adsCount.
    * Only returns users with verified emails.
+   * @deprecated Use listPaginated for production — loads all users into memory.
    */
   async list(): Promise<DirectoryUser[]> {
     const rows = await db
@@ -86,6 +87,94 @@ export const userRepository = {
     }
 
     return clone(result);
+  },
+
+  /**
+   * List users with DB-level pagination (no memory issues at scale).
+   * Uses batch ad-count queries to avoid N+1 problem.
+   * 
+   * SECURITY: Only returns safe fields (no phone, role, joinedDate).
+   */
+  async listPaginated(
+    page: number,
+    limit: number,
+    search?: string,
+  ): Promise<{ users: { id: string; name: string; email: string; avatar: string; username?: string; adsCount: number; status: string }[]; meta: { page: number; limit: number; total: number; totalPages: number; hasMore: boolean } }> {
+    const offset = (page - 1) * limit;
+
+    // Build WHERE clause
+    const whereClause = and(
+      sql`${users}.email_verified IS NOT NULL`,
+      search
+        ? and(
+            ilike(users.displayName, `%${search}%`),
+          )
+        : undefined,
+    );
+
+    // Count total
+    const countResult = await db
+      .select({ count: count() })
+      .from(users)
+      .where(whereClause);
+
+    const total = Number(countResult[0]?.count ?? 0);
+
+    // Fetch users with batched ad counts (NO N+1)
+    const rows = await db
+      .select({
+        id: users.id,
+        displayName: users.displayName,
+        email: users.email,
+        avatar: users.avatar,
+        username: users.username,
+      })
+      .from(users)
+      .where(whereClause)
+      .limit(limit)
+      .offset(offset)
+      .orderBy(users.createdAt);
+
+    if (rows.length === 0) {
+      return { users: [], meta: { page, limit, total, totalPages: 0, hasMore: false } };
+    }
+
+    const userIds = rows.map((r) => r.id);
+
+    // Batch query: count ads per user (single query, N+1 eliminated)
+    const adCounts = await db
+      .select({
+        ownerId: products.ownerId,
+        count: count(),
+      })
+      .from(products)
+      .where(sql`${products.status} != 'deleted'`)
+      .groupBy(products.ownerId)
+      .having(sql`${products.ownerId} IN (${userIds.join(",")})`);
+
+    const adCountMap = new Map<string, number>();
+    for (const row of adCounts) {
+      adCountMap.set(row.ownerId, row.count);
+    }
+
+    // Map to safe response (no phone, role, joinedDate)
+    const result = rows.map((row) => ({
+      id: row.id,
+      name: row.displayName,
+      email: row.email,
+      avatar: row.avatar ?? "",
+      username: row.username ?? undefined,
+      adsCount: adCountMap.get(row.id) ?? 0,
+      status: "active",
+    }));
+
+    const totalPages = Math.ceil(total / limit) || 1;
+    const hasMore = page < totalPages;
+
+    return {
+      users: clone(result),
+      meta: { page, limit, total, totalPages, hasMore },
+    };
   },
 
   /**

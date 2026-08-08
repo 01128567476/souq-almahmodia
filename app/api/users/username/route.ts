@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser, getViewerId } from "@/lib/serverAuth";
+import { getViewerId } from "@/lib/serverAuth";
 import { validateUsername, checkUsernameAvailability, generateUsernameSuggestions, normalizeUsernameInput, getCooldownRemaining } from "@/lib/usernameValidator";
+import { db } from "@/lib/db-server";
+import { users, usernameHistory } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
 import { userRepository } from "@/services/repositories/userRepository";
 
 /**
@@ -35,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     const normalized = normalizeUsernameInput(rawUsername)!;
     const userRows = await userRepository.getAllWithUsername();
-    const existingUsernames = new Set(userRows.map((p: any) => (p.usernameLower ?? "").trim().toLowerCase()));
+    const existingUsernames = new Set(userRows.map((p) => String((p as any).usernameLower ?? "").trim().toLowerCase()));
 
     // If user is changing username, allow re-using their own old username
     const currentUser = await userRepository.getFullProfile(userId);
@@ -71,8 +74,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // In a real implementation, we'd update the database here.
-    // For mock, we acknowledge the change but don't persist it.
+    // PERSIST to database
+    await db
+      .update(users)
+      .set({
+        username: normalized,
+        usernameLower: normalized,
+        usernameLastChangedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+
+    // Record in username_history for audit
+    await db.insert(usernameHistory).values({
+      userId,
+      username: normalized,
+      changedAt: new Date(),
+    });
+
     return NextResponse.json({
       success: true,
       username: normalized,
@@ -103,7 +122,7 @@ export async function GET(request: NextRequest) {
 
     const normalized = normalizeUsernameInput(username)!;
     const userRows = await userRepository.getAllWithUsername();
-    const existingUsernames = new Set(userRows.map((p: any) => (p.usernameLower ?? "").trim().toLowerCase()));
+    const existingUsernames = new Set(userRows.map((p) => String((p as any).usernameLower ?? "").trim().toLowerCase()));
     const availability = checkUsernameAvailability(normalized, existingUsernames);
 
     if (availability === "taken") {

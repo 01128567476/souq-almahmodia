@@ -48,8 +48,6 @@ export const reactionRepository = {
    * Otherwise, a new reaction is created.
    */
   async upsert(input: ReactionUpsertInput): Promise<void> {
-    console.log("[reactionRepository.upsert] Called with:", { adId: input.adId, userId: input.userId, type: input.type });
-    
     try {
       await db
         .insert(reactions)
@@ -62,8 +60,6 @@ export const reactionRepository = {
           target: [reactions.adId, reactions.userId],
           set: { type: input.type },
         });
-
-      console.log("[reactionRepository.upsert] Success");
     } catch (error) {
       console.error("[reactionRepository.upsert] Failed:", error);
       throw error;
@@ -85,16 +81,7 @@ export const reactionRepository = {
       )
       .returning({ affectedUserId: reactions.userId });
 
-    const affected = result.length;
-    console.log(
-      `[reactionRepository.remove] adId=${adId} userId=${userId} affected=${affected}`,
-    );
-    if (affected === 0) {
-      console.warn(
-        `[reactionRepository.remove] WARNING: 0 rows affected. Reaction may not exist.`,
-      );
-    }
-    return affected;
+    return result.length;
   },
 
   /**
@@ -180,21 +167,10 @@ export const reactionRepository = {
     adId: string,
     viewerId: string | null,
   ): Promise<ReactionSummary> {
-    console.log(
-      "[reactionRepository.getSummary] Called with adId:",
-      adId,
-      "viewerId:",
-      viewerId,
-    );
-
-    // Single query: get ALL reactions for this ad, then compute viewerReaction
-    // in JavaScript — avoids a second query that could return stale data.
     const rows = await db
       .select()
       .from(reactions)
       .where(eq(reactions.adId, adId));
-
-    console.log("[reactionRepository.getSummary] Fetched rows:", rows.length);
 
     const counts: Record<ReactionType, number> = {
       like: 0,
@@ -218,10 +194,6 @@ export const reactionRepository = {
 
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
 
-    console.log(
-      "[reactionRepository.getSummary] Result:",
-      JSON.stringify({ total, counts, viewerReaction }),
-    );
     return { total, counts, viewerReaction };
   },
 

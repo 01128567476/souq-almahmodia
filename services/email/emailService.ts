@@ -54,8 +54,7 @@ export interface IEmailService {
 function generateVerificationTemplate(token: string, locale: "ar" | "en", name: string): EmailTemplate {
   const isAr = locale === "ar";
 
-  const
- subject = isAr    ? "تحقق من بريدك الإلكتروني"
+  const subject = isAr    ? "تحقق من بريدك الإلكتروني"
     : "Verify Your Email Address";
 
   const buttonText = isAr ? "تحقق من البريد الإلكتروني" : "Verify Email Address";
@@ -72,8 +71,8 @@ function generateVerificationTemplate(token: string, locale: "ar" | "en", name: 
 
   const verificationUrl = `${process.env.NEXTAUTH_URL}/api/auth/verify-email?token=${token}`;
 
-  const    html = `
- <!DOCTYPE html>
+  const html = `
+    <!DOCTYPE html>
     <html lang="${locale}" dir="${isAr ? 'rtl' : 'ltr'}">
     <head>
       <meta charset="UTF-8">
@@ -231,8 +230,8 @@ function generateWelcomeTemplate(name: string, locale: "ar" | "en"): EmailTempla
         .greeting { font-size: 18px; color: #333; margin-bottom: 20px; font-weight: 500; }
         .body-text { font-size: 16px; color: #666; line-height: 1.6; margin-bottom: 20px; }
         .footer { background: #f9f9f9; padding: 20px 30px; text-align: center; }
-        .footer p { margin: 0; font-size: 14px;
-        color: #999; } .signature { font-size: 16px; color: #333; margin-top: 30px; font-weight: 600; }
+        .footer p { margin: 0; font-size: 14px; color: #999; }
+        .signature { font-size: 16px; color: #333; margin-top: 30px; font-weight: 600; }
       </style>
     </head>
     <body>
@@ -268,9 +267,9 @@ function generateWelcomeTemplate(name: string, locale: "ar" | "en"): EmailTempla
  *
  * Environment variable: RESEND_API_KEY
  */
-export class ResendEmailService implements IEmailService
- {
-  private apiKey: string;  private fromAddress: string;
+export class ResendEmailService implements IEmailService {
+  private apiKey: string;
+  private fromAddress: string;
 
   constructor() {
     this.apiKey = process.env.RESEND_API_KEY || "";
@@ -278,7 +277,6 @@ export class ResendEmailService implements IEmailService
 
     // Validate fromAddress format — Resend requires "name <email>" format
     if (this.fromAddress && !this.fromAddress.includes("<")) {
-      // If fromAddress is just an email, wrap it properly
       this.fromAddress = this.fromAddress;
     }
   }
@@ -288,12 +286,6 @@ export class ResendEmailService implements IEmailService
       console.warn("[EmailService] RESEND_API_KEY not configured. Skipping email send.");
       return;
     }
-
-    // Allowed test emails (Resend free tier restriction)
-    const ALLOWED_TEST_EMAILS = ["mohanadayman235@gmail.com"];
-    const isOwnerEmail = Array.isArray(options.to)
-      ? options.to.every(e => ALLOWED_TEST_EMAILS.includes(e.toLowerCase()))
-      : ALLOWED_TEST_EMAILS.includes(options.to.toLowerCase());
 
     try {
       const from = `${process.env.EMAIL_FROM_NAME || "stitch_souqna"} <${this.fromAddress}>`;
@@ -318,21 +310,6 @@ export class ResendEmailService implements IEmailService
       const responseText = await response.text();
 
       if (!response.ok) {
-        // If recipient is not owner email, log OTP to console instead of throwing
-        if (!isOwnerEmail) {
-          console.log("\n" + "=".repeat(60));
-          console.log("[EMAIL] OTP — send to:", options.to);
-          console.log("[EMAIL] Subject:", options.subject);
-          console.log("[EMAIL] This is a test email. Extract OTP from content below:");
-          // Extract OTP from HTML content
-          const otpMatch = options.html.match(/\d{6}/);
-          if (otpMatch) {
-            console.log("[EMAIL] OTP Code:", otpMatch[0]);
-          }
-          console.log("=".repeat(60) + "\n");
-          return; // Don't throw — let the registration succeed
-        }
-
         console.error("[EmailService] Resend API error:", response.status, responseText);
         throw new Error(`Email send failed: ${response.status} ${response.statusText}`);
       }
@@ -340,7 +317,7 @@ export class ResendEmailService implements IEmailService
       let responseData;
       try {
         responseData = JSON.parse(responseText);
-        if (responseData.id) {
+        if (process.env.NODE_ENV !== "production" && responseData?.id) {
           console.log("[EmailService] Email sent successfully, ID:", responseData.id);
         }
       } catch {
@@ -353,7 +330,6 @@ export class ResendEmailService implements IEmailService
   }
 
   async sendVerificationEmail(to: string, token: string, locale: "ar" | "en"): Promise<void> {
-    // Get user name from DB if needed — fallback to "User"
     const template = generateVerificationTemplate(token, locale, "User");
     await this.sendEmail({
       to,
@@ -394,20 +370,26 @@ export class ResendEmailService implements IEmailService
  */
 export class NoOpEmailService implements IEmailService {
   async sendVerificationEmail(to: string, token: string, locale: "ar" | "en"): Promise<void> {
-    console.log(`\n[DEV EMAIL] Verification Token for ${to}: ${token}\n`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`\n[DEV EMAIL] Verification Token for ${to}: ${token}\n`);
+    }
   }
 
   async sendOtpEmail(to: string, otp: string, purpose: "reset" | "verify" | "login", locale: "ar" | "en"): Promise<void> {
-    console.log(`\n[DEV EMAIL] OTP for ${to}: ${otp} (purpose: ${purpose})\n`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`\n[DEV EMAIL] OTP for ${to}: ${otp} (purpose: ${purpose})\n`);
+    }
   }
 
   async sendWelcomeEmail(to: string, name: string, locale: "ar" | "en"): Promise<void> {
-    console.log(`\n[DEV EMAIL] Welcome email for ${name} (${to})\n`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`\n[DEV EMAIL] Welcome email for ${name} (${to})\n`);
+    }
   }
 }
 
-/* --------------------------------------------------------------------------                                                                    */
-/* Factory */
+/* -------------------------------------------------------------------------- */
+/* Factory                                                                    */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -423,7 +405,6 @@ export function getEmailService(): IEmailService {
     } else {
       emailServiceInstance = new NoOpEmailService();
     }
-
   }
   return emailServiceInstance;
 }

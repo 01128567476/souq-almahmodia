@@ -1,5 +1,5 @@
 /**
- * Next.js middleware for internationalization and route protection.
+ * Next.js middleware for internationalization, route protection, and security headers.
  *
  * Runtime: nodejs (required for pg connection when auth is imported)
  */
@@ -18,6 +18,7 @@ const localePattern = new RegExp(`^/(${locales.join("|")})`);
 
 /**
  * Security headers applied to every response.
+ * CSP configured for: Cloudinary images, blob previews, Google OAuth.
  */
 const securityHeaders: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
@@ -26,19 +27,18 @@ const securityHeaders: Record<string, string> = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-  "Content-Security-Policy": [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://fonts.googleapis.com https://accounts.google.com https://ajax.googleapis.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "img-src 'self' data: https: blob:",
-    "font-src 'self' https://fonts.gstatic.com",
-    "connect-src 'self' https://accounts.google.com https://ajax.googleapis.com",
-    "frame-src 'self' https://accounts.google.com",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
+  "Content-Security-Policy":
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://ajax.googleapis.com; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "img-src 'self' data: blob: https://res.cloudinary.com; " +
+    "font-src 'self' https://fonts.gstatic.com; " +
+    "connect-src 'self' https://accounts.google.com https://ajax.googleapis.com https://api.cloudinary.com https://res.cloudinary.com; " +
+    "frame-src https://accounts.google.com; " +
+    "object-src 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
     "frame-ancestors 'none'",
-  ].join("; "),
   "Cache-Control": "no-store, max-age=0",
 };
 

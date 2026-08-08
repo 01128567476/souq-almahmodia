@@ -163,7 +163,14 @@ export function AdminAdDetailsView({
           <div className="space-y-6">
             <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
               <div className="relative h-80 rounded-[2rem] bg-surface-container-lowest overflow-hidden">
-                <Image src={ad.images?.[0] ?? ad.image} alt={ad.title} fill sizes="(max-width: 1024px) 100vw, 360px" className="object-cover" />
+                <Image
+                  src={ad.images?.[0] ?? ad.image}
+                  alt={ad.title}
+                  fill
+                  sizes="(max-width: 1024px) 100vw, 360px"
+                  className="object-cover"
+                  onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+                />
               </div>
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-3">

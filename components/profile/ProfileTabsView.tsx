@@ -83,6 +83,7 @@ export function ProfileTabsView({
               alt={user.displayName}
               fill
               className="object-cover"
+              onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
             />
           </div>
           {/* Edit Avatar Button */}

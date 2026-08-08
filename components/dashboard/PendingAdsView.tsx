@@ -129,12 +129,26 @@ export function PendingAdsView({
             <article key={ad.id} className="overflow-hidden rounded-3xl border border-outline-variant bg-surface-container-low">
               <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
                 <div className="relative h-56 lg:h-full bg-surface-container-lowest">
-                  <Image src={primaryImage} alt={ad.title} fill sizes="(max-width: 1024px) 100vw, 360px" className="object-cover" />
-                   {thumbImages.length > 0 && (
-                     <div className="absolute bottom-3 start-3 flex items-center gap-2">
-                       {thumbImages.map((src, index) => (
-                         <div key={`${src}-${index}`} className="relative h-12 w-12 overflow-hidden rounded-xl border border-white/70 bg-surface-container-low">
-                          <Image src={src} alt="" fill sizes="64px" className="object-cover" />
+                  <Image
+                    src={primaryImage}
+                    alt={ad.title}
+                    fill
+                    sizes="(max-width: 1024px) 100vw, 360px"
+                    className="object-cover"
+                    onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+                  />
+                  {thumbImages.length > 0 && (
+                    <div className="absolute bottom-3 start-3 flex items-center gap-2">
+                      {thumbImages.map((src, index) => (
+                        <div key={`${src}-${index}`} className="relative h-12 w-12 overflow-hidden rounded-xl border border-white/70 bg-surface-container-low">
+                          <Image
+                            src={src}
+                            alt=""
+                            fill
+                            sizes="64px"
+                            className="object-cover"
+                            onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+                          />
                         </div>
                       ))}
                     </div>
@@ -242,7 +256,14 @@ export function PendingAdsView({
 
                       <div className="grid gap-6 sm:grid-cols-[200px_minmax(0,1fr)]">
                         <div className="relative h-44 w-full overflow-hidden rounded-2xl bg-surface-container-low">
-                          <Image src={primaryImage} alt={ad.title} fill sizes="200px" className="object-cover" />
+                          <Image
+                            src={primaryImage}
+                            alt={ad.title}
+                            fill
+                            sizes="200px"
+                            className="object-cover"
+                            onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+                          />
                         </div>
                         <div>
                           <p className="text-body-md font-body-md text-on-surface whitespace-pre-line">
@@ -253,9 +274,16 @@ export function PendingAdsView({
 
                       {galleryImages.length > 1 && (
                         <div className="mt-4 flex flex-wrap gap-3">
-                          {galleryImages.map((src, index) => (
+                       {galleryImages.map((src, index) => (
                             <div key={`${src}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-xl border border-outline-variant bg-surface-container-low">
-                              <Image src={src} alt="" fill sizes="80px" className="object-cover" />
+                              <Image
+                                src={src}
+                                alt=""
+                                fill
+                                sizes="80px"
+                                className="object-cover"
+                                onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }}
+                              />
                             </div>
                           ))}
                         </div>

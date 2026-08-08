@@ -3,17 +3,18 @@
  *   Returns the favorite count and whether the viewer has favorited.
  *
  * POST /api/ads/[id]/favorites
- *   Toggles the viewer's favorite for an ad.
- *   - If favorite exists → removes it
- *   - If favorite doesn't exist → creates it
- *   - Returns consistent response: { favorited, count }
+ *   Toggle the viewer's favorite for an ad.
+ *   - Uses transaction for consistency (no race conditions)
+ *   - Returns authoritative server state: { favorited, count }
  *
  * Production-only. No mock data. No temporary code.
  * User identity derived from Auth.js session.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { favoriteRepository } from "@/services/repositories/favoriteRepository";
+import { db } from "@/lib/db-server";
+import { favorites } from "@/drizzle/schema";
+import { eq, and } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/serverAuth";
 
 /* -------------------------------------------------------------------------- */
@@ -29,12 +30,24 @@ export async function GET(
     const url = new URL(request.url);
     const viewerId = url.searchParams.get("viewerId");
 
-    const count = await favoriteRepository.countByAd(id);
-    const isFavorited = viewerId
-      ? await favoriteRepository.isFavorited(id, viewerId)
-      : false;
+    // Count favorites for this ad
+    const [{ count }] = await db
+      .select({ count: db.$count(favorites) })
+      .from(favorites)
+      .where(eq(favorites.adId, id));
 
-    return NextResponse.json({ success: true, data: { count, isFavorited } });
+    // Check if viewer favorited
+    let isFavorited = false;
+    if (viewerId) {
+      const existing = await db
+        .select({ id: favorites.id })
+        .from(favorites)
+        .where(and(eq(favorites.adId, id), eq(favorites.userId, viewerId)))
+        .limit(1);
+      isFavorited = existing.length > 0;
+    }
+
+    return NextResponse.json({ success: true, data: { count: Number(count), isFavorited } });
   } catch {
     return NextResponse.json(
       { success: false, error: "Failed to fetch favorites" },
@@ -44,7 +57,7 @@ export async function GET(
 }
 
 /* -------------------------------------------------------------------------- */
-/* POST — Toggle favorite (add if absent, remove if present)                 */
+/* POST — Toggle favorite (transactional — no race conditions)               */
 /* -------------------------------------------------------------------------- */
 
 export async function POST(
@@ -52,7 +65,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
-    const { id } = await params;
+    const { id: adId } = await params;
 
     // Derive userId from Auth.js session (not from client)
     const currentUser = await getCurrentUser();
@@ -64,38 +77,52 @@ export async function POST(
     }
 
     const userId = currentUser.id;
-    const adId = id;
 
-    // Check if already favorited
-    const alreadyFavorited = await favoriteRepository.isFavorited(adId, userId);
+    // Transactional toggle — all reads and writes happen on the same connection
+    const result = await db.transaction(async (tx) => {
+      // Check if this user already favorited this ad
+      const existing = await tx
+        .select({ id: favorites.id })
+        .from(favorites)
+        .where(and(eq(favorites.adId, adId), eq(favorites.userId, userId)))
+        .limit(1);
 
-    if (alreadyFavorited) {
-      // Remove the favorite
-      await favoriteRepository.remove(adId, userId);
-      const count = await favoriteRepository.countByAd(adId);
+      if (existing.length > 0) {
+        // DELETE the favorite
+        await tx
+          .delete(favorites)
+          .where(and(eq(favorites.adId, adId), eq(favorites.userId, userId)));
 
-      return NextResponse.json({
-        success: true,
-        data: {
-          favorited: false,
-          count,
-        },
-      });
-    }
+        // Re-count
+        const [{ count }] = await tx
+          .select({ count: db.$count(favorites) })
+          .from(favorites)
+          .where(eq(favorites.adId, adId));
 
-    // Add the favorite (uses ON CONFLICT DO NOTHING — safe against race conditions)
-    const added = await favoriteRepository.add({ userId, adId });
+        return { favorited: false, count: Number(count) };
+      }
 
-    const count = await favoriteRepository.countByAd(adId);
+      // INSERT (ON CONFLICT DO NOTHING prevents duplicates on race)
+      await tx
+        .insert(favorites)
+        .values({ adId, userId })
+        .onConflictDoNothing();
+
+      // Re-count
+      const [{ count }] = await tx
+        .select({ count: db.$count(favorites) })
+        .from(favorites)
+        .where(eq(favorites.adId, adId));
+
+      return { favorited: true, count: Number(count) };
+    });
 
     return NextResponse.json({
       success: true,
-      data: {
-        favorited: added,
-        count,
-      },
+      data: result,
     });
-  } catch {
+  } catch (error) {
+    console.error("[FAVORITE_ERROR]", error);
     return NextResponse.json(
       { success: false, error: "Failed to toggle favorite" },
       { status: 500 },

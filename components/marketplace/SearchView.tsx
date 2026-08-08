@@ -235,7 +235,7 @@ export function SearchView({ products, query: initialQuery }: { products: Produc
                     {/* Ad Image */}
                     <div className="relative aspect-square overflow-hidden bg-surface-container">
                       <SafeProductImage
-                        src={ad.image}
+                        src={ad.image || "/placeholder-image.svg"}
                         alt={ad.title}
                         fill
                         className="object-cover group-hover:scale-105 transition-transform duration-300"

@@ -300,7 +300,7 @@ export function SearchBar({
                       className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-surface-container-low border-b border-outline-variant/50 last:border-b-0"
                     >
                       <SafeProductImage
-                        src={ad.image}
+                        src={ad.image || "/placeholder-image.svg"}
                         alt={ad.title}
                         width={48}
                         height={48}
@@ -397,7 +397,7 @@ function LegacyProductDropdown({
             className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-surface-container-low"
           >
             <SafeProductImage
-              src={product.image}
+              src={product.image || "/placeholder-image.svg"}
               alt={product.title}
               width={48}
               height={48}

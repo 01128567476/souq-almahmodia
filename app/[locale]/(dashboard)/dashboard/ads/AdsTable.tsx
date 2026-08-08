@@ -18,9 +18,9 @@ export function AdsTable({ ads }: { ads: Product[] }) {
       header: t("ads.title"),
       cell: (ad) => (
         <div className="flex items-center gap-md">
-          <div className="relative h-10 w-10 overflow-hidden rounded-lg bg-surface-container-highest">
-            <Image src={ad.image} alt={ad.title} fill className="object-cover" />
-          </div>
+           <div className="relative h-10 w-10 overflow-hidden rounded-lg bg-surface-container-highest">
+             <Image src={ad.image} alt={ad.title} fill className="object-cover" onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }} />
+           </div>
           <span className="font-medium text-on-surface">{ad.title}</span>
         </div>
       ),

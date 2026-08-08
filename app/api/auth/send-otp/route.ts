@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createOtpToken } from "@/services/repositories/otpRepository";
 import { userRepository } from "@/services/repositories/userRepository";
+import { sendOtpEmail } from "@/services/email/resend";
 
 /** Rate limiting: max 3 requests per window */
 const MAX_REQUESTS = 3;
@@ -87,14 +88,22 @@ export async function POST(request: NextRequest) {
     const result = await createOtpToken(user.id, user.email, "email");
 
     if (!result.success || !result.code) {
+      console.error("[SEND_OTP] Failed to create OTP token:", result.error);
       return NextResponse.json(
-        { success: false, message: "Failed to send OTP code." },
+        { success: false, message: "Failed to generate OTP code." },
         { status: 500 }
       );
     }
 
-    // TODO: Send OTP via email
-    // await sendOtpEmail(user.email, result.code, p);
+    // Actually send OTP email via Resend
+    const emailResult = await sendOtpEmail(user.email, result.code, p);
+
+    if (!emailResult.success) {
+      // Log but still return success to prevent user enumeration
+      console.error(`[SEND_OTP] Email delivery failed for ${user.email}:`, emailResult.error);
+      // Still return success — the OTP was created, just email delivery failed
+      // The user will need to request a new one (rate limited)
+    }
 
     return NextResponse.json({
       success: true,

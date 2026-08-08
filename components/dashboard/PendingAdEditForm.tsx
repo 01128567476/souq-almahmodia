@@ -111,7 +111,7 @@ export function PendingAdEditForm({
         <div className="flex flex-wrap gap-md">
           {images.map((src, index) => (
             <div key={`${src}-${index}`} className="relative w-28 h-28 rounded-2xl overflow-hidden border border-outline-variant">
-              <Image src={src} alt="" fill sizes="112px" className="object-cover" />
+              <Image src={src} alt="" fill sizes="112px" className="object-cover" onError={(e) => { e.currentTarget.src = "/placeholder-image.svg"; }} />
               <button
                 type="button"
                 onClick={() => removePhoto(index)}

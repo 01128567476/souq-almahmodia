@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { adRepository, type AdUpdateInput } from "@/services/repositories/adRepository";
 import { getCurrentUser } from "@/lib/serverAuth";
 import { isAdmin } from "@/lib/permissions";
+import { deleteImagesFromCloudinary } from "@/lib/cloudinary";
 
 export async function PATCH(
   request: Request,
@@ -72,6 +73,23 @@ export async function PATCH(
     );
   }
 
+  // Clean up old images that are no longer used (owner-only updates)
+  if (isOwner && Array.isArray(allowedPatch.images)) {
+    const oldImages = ad.images ?? [];
+    const newImages = allowedPatch.images;
+    if (JSON.stringify(oldImages) !== JSON.stringify(newImages)) {
+      const removed = oldImages.filter((old) => !newImages.includes(old));
+      if (removed.length > 0) {
+        try {
+          await deleteImagesFromCloudinary(removed);
+        } catch (error) {
+          console.error(`[CLOUDINARY_CLEANUP] Failed to remove old images on ad update:`, error);
+          // Don't fail the request — images may be referenced elsewhere
+        }
+      }
+    }
+  }
+
   const updated = await adRepository.update(id, allowedPatch, {
     id: currentUser.id,
     name: currentUser.name,
@@ -96,6 +114,25 @@ export async function DELETE(
   // Authorize: only admins can delete ads (owners can hide instead)
   if (!isAdmin(currentUser.role)) {
     return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  }
+
+  // Delete all images from Cloudinary before removing ad
+  const adToDelete = await adRepository.getById(id);
+  if (adToDelete) {
+    const allImages = [
+      adToDelete.image,
+      ...(adToDelete.images ?? []),
+    ].filter(Boolean) as string[];
+
+    if (allImages.length > 0) {
+      try {
+        const deleted = await deleteImagesFromCloudinary(allImages);
+        console.log(`[CLOUDINARY_CLEANUP] Deleted ${deleted.length} images for ad ${id}`);
+      } catch (error) {
+        console.error(`[CLOUDINARY_CLEANUP] Failed to delete images for ad ${id}:`, error);
+        // Continue with ad deletion — images may be orphaned but ad is removed
+      }
+    }
   }
 
   await adRepository.remove(id, {

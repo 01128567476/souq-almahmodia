@@ -1,240 +1,172 @@
+/**
+ * SafeImage — Next.js Image with guaranteed fallback
+ *
+ * Components:
+ * - SafeImage: general purpose wrapped <Image>
+ * - SafeProductImage: for ad/product images (supports fill)
+ * - SafeAvatar: for user avatars (supports w/h)
+ *
+ * All components:
+ * - Automatically fall back to placeholder on load error
+ * - Handle empty/null/invalid src values
+ * - Reject blob:, data: URLs
+ */
+
 "use client";
 
 import Image from "next/image";
-import { cn } from "@/utils/cn";
-import { getValidImage, getInitialFromName } from "@/lib/imageUtils";
-import { Icon } from "@/components/ui/Icon";
+import { useState } from "react";
+import type { ImageProps } from "next/image";
 
-/**
- * Fallback UI types for SafeImage component.
- * Determines the visual appearance of the placeholder.
- */
-export type FallbackType = "avatar" | "product" | "default";
+const PLACEHOLDER = "/placeholder-image.svg";
 
-/**
- * SafeImage component that safely handles empty/null/undefined image sources.
- * 
- * Features:
- * - Validates src before rendering Image component
- * - Shows contextual fallback UI when src is invalid
- * - Supports loading skeleton for smooth transitions
- * - Responsive sizing via className
- * - Works with SSR (Next.js Image optimization)
- * 
- * @example
- * // Basic usage
- * <SafeImage src={user.avatar} alt={user.name} />
- * 
- * @example
- * // With fallback type
- * <SafeImage src={product.image} alt={product.title} fallbackType="product" />
- * 
- * @example
- * // With skeleton loading
- * <SafeImage src={user.avatar} alt={user.name} skeleton />
- */
+/* ------------------------------------------------------------------ */
+/* Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+/** Return placeholder if src is empty, null, or invalid. */
+function sanitizeSrc(src: string | undefined | null): string {
+  if (!src) return PLACEHOLDER;
+  if (src.startsWith("blob:") || src.startsWith("data:")) return PLACEHOLDER;
+  return src;
+}
+
+/** Avatar initials generator — returns first letter of name. */
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2) || "?";
+}
+
+/** Avatar color based on name hash — deterministic per user. */
+function getAvatarColor(name: string): string {
+  const colors = [
+    "#6366f1", "#8b5cf6", "#a855f7", "#d946ef",
+    "#ec4899", "#f43f5e", "#ef4444", "#f97316",
+    "#eab308", "#84cc16", "#22c55e", "#14b8a6",
+    "#06b6d4", "#0ea5e9", "#3b82f6",
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+/* ------------------------------------------------------------------ */
+/* SafeImage                                                          */
+/* ------------------------------------------------------------------ */
+
 export function SafeImage({
   src,
-  alt = "",
-  width,
-  height,
-  className,
-  fallbackType = "default",
-  skeleton = false,
-  priority = false,
-  quality = 75,
-  ...restProps
+  alt,
+  onError: externalOnError,
+  ...props
+}: ImageProps & { src?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  const effectiveSrc = failed ? PLACEHOLDER : sanitizeSrc(src);
+
+  const handleError: ImageProps["onError"] = (e) => {
+    setFailed(true);
+    externalOnError?.(e);
+  };
+
+  return (
+    <Image
+      {...props}
+      src={effectiveSrc}
+      alt={alt}
+      onError={handleError}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* SafeProductImage — for ad/product images                           */
+/* ------------------------------------------------------------------ */
+
+export function SafeProductImage({
+  src,
+  alt,
+  onError: externalOnError,
+  ...props
+}: ImageProps & { src?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  const effectiveSrc = failed ? PLACEHOLDER : sanitizeSrc(src);
+
+  const handleError: ImageProps["onError"] = (e) => {
+    setFailed(true);
+    externalOnError?.(e);
+  };
+
+  return (
+    <Image
+      {...props}
+      src={effectiveSrc}
+      alt={alt}
+      onError={handleError}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* SafeAvatar — user avatar with initials fallback                    */
+/* ------------------------------------------------------------------ */
+
+export function SafeAvatar({
+  src,
+  name,
+  width = 40,
+  height = 40,
+  className = "",
+  onError: externalOnError,
 }: {
-  /** Image source URL. Can be null/undefined/empty string. */
-  src?: string | null;
-  /** Alt text for accessibility */
-  alt?: string;
-  /** Explicit width (optional when using fill or className) */
+  src?: string;
+  name: string;
   width?: number;
-  /** Explicit height (optional when using fill or className) */
   height?: number;
-  /** Tailwind CSS classes for styling */
   className?: string;
-  /** Type of fallback to display */
-  fallbackType?: FallbackType;
-  /** Show loading skeleton instead of fallback */
-  skeleton?: boolean;
-  /** Next.js Image priority prop */
-  priority?: boolean;
-  /** Next.js Image quality prop */
-  quality?: number;
-  /** Additional props to spread on the Image component */
-  [key: string]: unknown;
+  onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void;
 }) {
-  const validSrc = getValidImage(src);
-  const hasName = restProps["data-name"] as string | undefined;
-  const initial = getInitialFromName(hasName);
+  const [failed, setFailed] = useState(false);
 
-  // Fallback dimensions based on type
-  const fallbackSize = fallbackType === "avatar" ? 40 : fallbackType === "product" ? 48 : 64;
-  const fallbackClasses =
-    fallbackType === "avatar"
-      ? "rounded-full"
-      : fallbackType === "product"
-        ? "rounded-lg"
-        : "rounded-lg";
+  const effectiveSrc = failed ? null : sanitizeSrc(src);
+  const initials = getInitials(name);
+  const color = getAvatarColor(name);
 
-  // Loading skeleton
-  if (skeleton) {
+  if (!effectiveSrc) {
+    // Fallback: colored circle with initials
     return (
       <div
-        className={cn(
-          "animate-pulse bg-surface-container",
-          fallbackClasses,
-          className ?? `h-[${fallbackSize}px] w-[${fallbackSize}px]`,
-        )}
-        style={width || height ? { width, height } : undefined}
-        aria-hidden="true"
-      />
-    );
-  }
-
-  // No valid image - render fallback
-  if (!validSrc) {
-    return (
-      <div
-        className={cn(
-          "flex items-center justify-center bg-primary/15 text-primary font-bold",
-          fallbackClasses,
-          className,
-          fallbackType === "avatar" && "text-label-sm",
-          fallbackType === "product" && "text-body-sm",
-        )}
-        style={width || height ? { width, height } : undefined}
-        role="img"
-        aria-label={alt || "Image placeholder"}
+        className={`grid place-items-center rounded-full text-white font-semibold select-none ${className}`}
+        style={{
+          width,
+          height,
+          backgroundColor: color,
+          fontSize: Math.min(width, height) * 0.35,
+        }}
       >
-        {fallbackType === "avatar" ? (
-          <span className="text-label-sm font-bold">{initial}</span>
-        ) : fallbackType === "product" ? (
-          <Icon name="image_not_supported" size={20} className="text-on-surface-variant" />
-        ) : (
-          <Icon name="image_not_supported" size={24} className="text-on-surface-variant" />
-        )}
+        {initials}
       </div>
-    );
-  }
-
-  // Valid image - render with Next.js Image
-  const hasFill = className?.includes("fill") || restProps["fill"] === true;
-
-  if (hasFill) {
-    return (
-      <Image
-        src={validSrc}
-        alt={alt}
-        fill
-        quality={quality}
-        priority={priority}
-        className={className}
-        {...restProps}
-      />
     );
   }
 
   return (
     <Image
-      src={validSrc}
-      alt={alt}
+      src={effectiveSrc}
+      alt={name}
       width={width}
       height={height}
-      quality={quality}
-      priority={priority}
-      className={className}
-      {...restProps}
-    />
-  );
-}
-
-/**
- * Wrapper for user avatars with smart defaults.
- * 
- * @example
- * <SafeAvatar src={user.avatar} name={user.name} width={40} height={40} />
- */
-export function SafeAvatar({
-  src,
-  name,
-  className,
-  width = 40,
-  height = 40,
-  skeleton = false,
-}: {
-  src?: string | null;
-  name?: string;
-  className?: string;
-  width?: number;
-  height?: number;
-  skeleton?: boolean;
-}) {
-  return (
-    <SafeImage
-      src={src}
-      alt={name ?? "Avatar"}
-      width={width}
-      height={height}
-      className={cn("shrink-0", className)}
-      fallbackType="avatar"
-      skeleton={skeleton}
-      data-name={name}
-    />
-  );
-}
-
-/**
- * Wrapper for product/ad images with smart defaults.
- * 
- * @example
- * <SafeProductImage src={product.image} alt={product.title} />
- */
-export function SafeProductImage({
-  src,
-  alt,
-  className,
-  width,
-  height,
-  fill = false,
-  skeleton = false,
-  quality = 75,
-}: {
-  src?: string | null;
-  alt: string;
-  className?: string;
-  width?: number;
-  height?: number;
-  fill?: boolean;
-  skeleton?: boolean;
-  quality?: number;
-}) {
-  if (fill) {
-    return (
-      <SafeImage
-        src={src}
-        alt={alt}
-        fill
-        className={cn("object-cover", className)}
-        fallbackType="product"
-        skeleton={skeleton}
-        quality={quality}
-      />
-    );
-  }
-
-  return (
-    <SafeImage
-      src={src}
-      alt={alt}
-      width={width}
-      height={height}
-      className={cn("object-cover", className)}
-      fallbackType="product"
-      skeleton={skeleton}
-      quality={quality}
+      className={`rounded-full object-cover ${className}`}
+      onError={(e) => {
+        setFailed(true);
+        externalOnError?.(e);
+      }}
     />
   );
 }

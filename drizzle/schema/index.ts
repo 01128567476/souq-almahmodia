@@ -63,6 +63,9 @@ export {
   auditLogs,
   notifications,
   settings,
+  pins,
+  userSettings,
+  usernameHistory,
   tables,
 } from "./tables";
 

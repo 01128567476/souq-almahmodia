@@ -31,7 +31,10 @@ export function AdForm({
   const locale = useLocale() as Locale;
   const router = useRouter();
 
+  // Preview URLs (blob: for new files, cloudinary: for existing/uploaded)
   const [images, setImages] = useState<string[]>(product?.images ?? []);
+  // Actual Cloudinary URLs to send to the API — populated at upload time (NOT submit time)
+  const [uploadedUrls, setUploadedUrls] = useState<string[]>(product?.images ?? []);
   const [title, setTitle] = useState(product?.title ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
   const [price, setPrice] = useState(product ? String(product.price) : "");
@@ -60,29 +63,70 @@ export function AdForm({
     label: resolveCategoryName(c, locale),
   }));
 
-  // File input handler — stores File objects for upload, blob URLs for preview only
-  const fileRefsRef = useRef<Map<number, File>>(new Map());
-
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  // File input handler — uploads immediately to Cloudinary, stores both preview and real URLs
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    const remainingSlots = 10 - images.length;
+    const remainingSlots = 10 - uploadedUrls.length;
     const totalFiles = Math.min(files.length, remainingSlots);
+    if (totalFiles === 0) return;
+
+    setIsUploading(true);
+    setUploadProgress(10);
+
+    const formData = new FormData();
+    const previewUrls: string[] = [];
 
     for (let i = 0; i < totalFiles; i++) {
       const file = files[i];
       if (!file.type.startsWith("image/")) continue;
-      const url = URL.createObjectURL(file);
-      // Store File object for upload later
-      fileRefsRef.current.set(images.length + i, file);
-      setImages((prev) => [...prev, url]);
+      previewUrls.push(URL.createObjectURL(file));
+      formData.append("files", file);
     }
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-  }, [images.length]);
+
+    try {
+      const res = await fetch("/api/upload/image", {
+        method: "POST",
+        body: formData,
+      });
+
+      setUploadProgress(60);
+
+      if (!res.ok) {
+        let errorMessage = "Image upload failed";
+        try {
+          const errorData = await res.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          // Fall back to default message
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await res.json();
+      const cloudinaryUrls: string[] = data.urls ?? [];
+
+      // Store real Cloudinary URLs
+      setUploadedUrls((prev) => [...prev, ...cloudinaryUrls]);
+      // Store preview URLs (will be replaced by Cloudinary URLs on submit)
+      setImages((prev) => [...prev, ...previewUrls]);
+
+      setUploadProgress(100);
+    } catch (err) {
+      console.error("[AdForm] Upload failed:", err);
+      setSubmitError(err instanceof Error ? err.message : "Image upload failed");
+      // Remove preview URLs on failure
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [uploadedUrls.length]);
 
   const triggerFileInput = () => {
     fileInputRef.current?.click();
@@ -94,21 +138,12 @@ export function AdForm({
       if (removed.startsWith("blob:")) {
         URL.revokeObjectURL(removed);
       }
-      fileRefsRef.current.delete(index);
-      // Re-map remaining file refs to maintain sequential indices
-      const remainingFiles = new Map<number, File>();
-      const newImages = prev.filter((_, i) => i !== index);
-      let newIndex = 0;
-      for (let i = 0; i < prev.length; i++) {
-        if (i === index) continue;
-        const file = fileRefsRef.current.get(i);
-        if (file) {
-          remainingFiles.set(newIndex, file);
-          newIndex++;
-        }
-      }
-      fileRefsRef.current = remainingFiles;
-      return newImages;
+      // Also remove from uploadedUrls if it's a cloudinary URL
+      setUploadedUrls((prevUrls) => {
+        const newUrls = prevUrls.filter((_, i) => i !== index);
+        return newUrls;
+      });
+      return prev.filter((_, i) => i !== index);
     });
   };
 
@@ -143,68 +178,11 @@ export function AdForm({
     setIsSubmitting(true);
 
     try {
-      // Step 1: Upload new File objects directly to Cloudinary (NO fetch of blob URLs)
-      let imageUrls: string[] = product?.images ?? [];
-
-      // Collect File objects stored from file input (these are the originals)
-      const newFiles: File[] = [];
-      fileRefsRef.current.forEach((file) => {
-        // Only include files not yet uploaded (ones not in current images state)
-        const imageIndex = images.indexOf(
-          images.find((img) => {
-            // Match by checking if the image is a blob URL
-            return img.startsWith("blob:");
-          }) ?? ""
-        );
-        // Always include - server handles dedup via timestamps
-        newFiles.push(file);
-      });
-
-      if (newFiles.length > 0) {
-        setIsUploading(true);
-        setUploadProgress(0);
-
-        const formData = new FormData();
-        for (const file of newFiles) {
-          formData.append("files", file);
-        }
-
-        setUploadProgress(20);
-
-        // Upload to Cloudinary — NO Content-Type header (browser sets it with boundary)
-        const uploadResponse = await fetch("/api/upload/image", {
-          method: "POST",
-          body: formData,
-        });
-
-        setUploadProgress(60);
-
-        if (!uploadResponse.ok) {
-          let errorMessage = "Image upload failed";
-          try {
-            const errorData = await uploadResponse.json();
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            // Fall back to default message
-          }
-          throw new Error(errorMessage);
-        }
-
-        setUploadProgress(80);
-
-        const uploadResult = await uploadResponse.json();
-        if (!uploadResult.urls || !Array.isArray(uploadResult.urls)) {
-          throw new Error("Invalid upload response from server");
-        }
-
-        imageUrls = [...(product?.images ?? []), ...uploadResult.urls];
-        setUploadProgress(100);
-        setIsUploading(false);
-      }
+      // Images are already uploaded to Cloudinary — just send the URLs
+      // uploadedUrls contains all Cloudinary URLs from pre-upload
+      const imageUrls = uploadedUrls;
 
       // Step 2: Create/update ad with Cloudinary URLs
-      setUploadProgress(90);
-
       const url = mode === "create" ? "/api/ads" : `/api/ads/${product?.id}`;
       const method = mode === "create" ? "POST" : "PATCH";
 
@@ -238,13 +216,12 @@ export function AdForm({
 
       const ad = await response.json();
 
-      // Clear blob URLs and File refs to free memory
+      // Clear blob URLs to free memory
       images.forEach((img) => {
         if (img.startsWith("blob:")) {
           URL.revokeObjectURL(img);
         }
       });
-      fileRefsRef.current.clear();
 
       // Navigate on success
       if (mode === "create") {
@@ -402,17 +379,42 @@ export function AdForm({
 
       {/* Submit Buttons */}
       <div className="flex gap-md pt-sm">
+        {/* Upload progress indicator */}
+        {isUploading && (
+          <div className="flex-1 py-md">
+            <div className="flex items-center gap-sm">
+              <div className="flex-1 h-2 bg-surface-container rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <span className="text-label-md text-on-surface-variant">{uploadProgress}%</span>
+            </div>
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={isSubmitting || isUploading}
-          className="flex items-center justify-center gap-sm py-md px-xl bg-primary text-on-primary rounded-xl font-label-md text-label-md font-bold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-60"
+          className="flex items-center justify-center gap-sm py-md px-xl bg-primary text-on-primary rounded-xl font-label-md text-label-md font-bold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-60 min-w-[200px]"
         >
-          <Icon name={mode === "create" ? "publish" : "save"} size={20} />
-          {isUploading
-            ? `${t("loading")} (${uploadProgress}%)`
-            : mode === "create"
-            ? t("publish")
-            : t("saveChanges")}
+          {isSubmitting ? (
+            <>
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-on-primary border-t-transparent" />
+              {t("loading")}
+            </>
+          ) : isUploading ? (
+            <>
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-on-primary border-t-transparent" />
+              {t("uploading")}
+            </>
+          ) : (
+            <>
+              <Icon name={mode === "create" ? "publish" : "save"} size={20} />
+              {mode === "create" ? t("publish") : t("saveChanges")}
+            </>
+          )}
         </button>
         <button
           type="button"

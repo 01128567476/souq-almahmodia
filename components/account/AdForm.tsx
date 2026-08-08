@@ -17,6 +17,69 @@ type Mode = "create" | "edit";
 // Placeholder image for failed loads
 const PLACEHOLDER_IMAGE = "/placeholder-image.svg";
 
+// Cloudinary upload endpoint
+const SIGNATURE_API = "/api/upload/signature";
+const CLOUDINARY_UPLOAD = "https://api.cloudinary.com/v1_1";
+
+/**
+ * Upload a single file directly to Cloudinary using a server-generated signature.
+ * Browser → Cloudinary (zero server load)
+ */
+async function uploadToCloudinary(file: File, cloudName: string, config: {
+  apiKey: string;
+  timestamp: string;
+  signature: string;
+}): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("api_key", config.apiKey);
+  formData.append("timestamp", config.timestamp);
+  formData.append("signature", config.signature);
+  formData.append("folder", "souq-ads");
+
+  const res = await fetch(
+    `${CLOUDINARY_UPLOAD}/${cloudName}/image/upload`,
+    { method: "POST", body: formData }
+  );
+
+  if (!res.ok) {
+    let errorMessage = "Cloudinary upload failed";
+    try {
+      const errorData = await res.json();
+      errorMessage = errorData.error?.message || errorMessage;
+    } catch {
+      // Fall back to default
+    }
+    throw new Error(errorMessage);
+  }
+
+  const data = await res.json();
+  return data.secure_url;
+}
+
+/**
+ * Fetch Cloudinary upload signature from server.
+ */
+async function fetchUploadSignature(): Promise<{
+  cloudName: string;
+  apiKey: string;
+  timestamp: string;
+  signature: string;
+}> {
+  const res = await fetch(SIGNATURE_API);
+  if (!res.ok) {
+    let errorMessage = "Failed to get upload signature";
+    try {
+      const errorData = await res.json();
+      errorMessage = errorData.error || errorMessage;
+    } catch {
+      // Fall back to default
+    }
+    throw new Error(errorMessage);
+  }
+  return res.json();
+}
+
 export function AdForm({
   mode,
   product,
@@ -48,6 +111,11 @@ export function AdForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasSubmittedRef = useRef(false);
+  // Cached signature to avoid redundant calls during batch upload
+  const signatureCacheRef = useRef<{
+    data: { cloudName: string; apiKey: string; timestamp: string; signature: string };
+    expiresAt: number;
+  } | null>(null);
 
   /** Extract only numeric characters (including Arabic digits) from price input. */
   const normalizePriceInput = (value: string): string => {
@@ -63,7 +131,7 @@ export function AdForm({
     label: resolveCategoryName(c, locale),
   }));
 
-  // File input handler — uploads immediately to Cloudinary, stores both preview and real URLs
+  // File input handler — uploads directly to Cloudinary, stores both preview and real URLs
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -73,50 +141,60 @@ export function AdForm({
     if (totalFiles === 0) return;
 
     setIsUploading(true);
-    setUploadProgress(10);
+    setUploadProgress(0);
 
-    const formData = new FormData();
     const previewUrls: string[] = [];
+    const remainingFiles: File[] = [];
 
     for (let i = 0; i < totalFiles; i++) {
       const file = files[i];
       if (!file.type.startsWith("image/")) continue;
       previewUrls.push(URL.createObjectURL(file));
-      formData.append("files", file);
+      remainingFiles.push(file);
     }
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
 
-    try {
-      const res = await fetch("/api/upload/image", {
-        method: "POST",
-        body: formData,
-      });
-
-      setUploadProgress(60);
-
-      if (!res.ok) {
-        let errorMessage = "Image upload failed";
-        try {
-          const errorData = await res.json();
-          errorMessage = errorData.error || errorMessage;
-        } catch {
-          // Fall back to default message
-        }
-        throw new Error(errorMessage);
+    // Get fresh signature (cached for 5 minutes to avoid per-file calls)
+    let signatureData = signatureCacheRef.current;
+    if (!signatureData || Date.now() > signatureData.expiresAt) {
+      try {
+        signatureData = {
+          data: await fetchUploadSignature(),
+          expiresAt: Date.now() + 5 * 60 * 1000, // 5 min cache
+        };
+      } catch (err) {
+        console.error("[AdForm] Signature fetch failed:", err);
+        setSubmitError(err instanceof Error ? err.message : "Failed to initialize upload");
+        previewUrls.forEach((url) => URL.revokeObjectURL(url));
+        setIsUploading(false);
+        return;
       }
+    }
 
-      const data = await res.json();
-      const cloudinaryUrls: string[] = data.urls ?? [];
+    try {
+      const { cloudName, apiKey, timestamp, signature } = signatureData.data;
+      const config = { apiKey, timestamp, signature };
 
-      // Store real Cloudinary URLs
-      setUploadedUrls((prev) => [...prev, ...cloudinaryUrls]);
-      // Store preview URLs (will be replaced by Cloudinary URLs on submit)
-      setImages((prev) => [...prev, ...previewUrls]);
+      // Upload all files in parallel directly to Cloudinary
+      const urls = await Promise.all(
+        remainingFiles.map(async (file) => {
+          const progressBase = remainingFiles.length > 1
+            ? Math.round((remainingFiles.indexOf(file) / remainingFiles.length) * 90)
+            : 10;
+          setUploadProgress(progressBase);
+          return uploadToCloudinary(file, cloudName, config);
+        })
+      );
 
       setUploadProgress(100);
+
+      // Store real Cloudinary URLs
+      setUploadedUrls((prev) => [...prev, ...urls]);
+      // Store preview URLs (will be replaced by Cloudinary URLs on submit)
+      setImages((prev) => [...prev, ...previewUrls]);
     } catch (err) {
       console.error("[AdForm] Upload failed:", err);
       setSubmitError(err instanceof Error ? err.message : "Image upload failed");
@@ -182,7 +260,6 @@ export function AdForm({
       // uploadedUrls contains all Cloudinary URLs from pre-upload
       const imageUrls = uploadedUrls;
 
-      // Step 2: Create/update ad with Cloudinary URLs
       const url = mode === "create" ? "/api/ads" : `/api/ads/${product?.id}`;
       const method = mode === "create" ? "POST" : "PATCH";
 

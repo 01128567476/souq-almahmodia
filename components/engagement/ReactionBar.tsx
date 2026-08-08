@@ -150,7 +150,7 @@ export function ReactionBar({
               onClick={(e) => pick(r.type, e)}
               disabled={!isAuthenticated || pending}
               className={cn(
-                "grid h-10 w-10 place-items-center rounded-full text-2xl transition-transform duration-150 hover:-translate-y-1 hover:scale-125 motion-reduce:transform-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-none",
+                "grid h-10 w-10 place-items-center rounded-full text-2xl transition-all duration-150 hover:-translate-y-1 hover:scale-125 motion-reduce:transform-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-none",
                 active === r.type && "bg-primary-fixed",
               )}
               style={{ transitionDelay: open ? `${i * 25}ms` : "0ms" }}
@@ -169,7 +169,7 @@ export function ReactionBar({
           disabled={pending || !isAuthenticated}
           title={!isAuthenticated ? t("loginRequired") : undefined}
           className={cn(
-            "flex items-center gap-xs rounded-full border px-md py-sm font-label-md text-label-md transition-all disabled:cursor-not-allowed disabled:opacity-60",
+            "flex items-center gap-xs rounded-full border px-md py-sm font-label-md text-label-md transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60",
             activeConfig
               ? "border-primary/40 bg-primary-fixed"
               : "border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low active:scale-95",

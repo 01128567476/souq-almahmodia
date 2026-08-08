@@ -11,6 +11,8 @@ import { Field, TextAreaField, SelectField } from "@/components/ui/Field";
 import { resolveCategoryName } from "@/utils/category";
 import { cn } from "@/utils/cn";
 import type { Category, Product } from "@/types";
+import { UploadQueue, type UploadItem, type UploadStatus } from "@/lib/uploadQueue";
+import type { CloudinaryConfig } from "@/lib/uploadRetry";
 
 type Mode = "create" | "edit";
 
@@ -19,63 +21,21 @@ const PLACEHOLDER_IMAGE = "/placeholder-image.svg";
 
 // Cloudinary upload endpoint
 const SIGNATURE_API = "/api/upload/signature";
-const CLOUDINARY_UPLOAD = "https://api.cloudinary.com/v1_1";
 
 /**
- * Upload a single file directly to Cloudinary using a server-generated signature.
- * Browser → Cloudinary (zero server load)
+ * Get Cloudinary upload signature (cached 5 min for batch uploads).
  */
-async function uploadToCloudinary(file: File, cloudName: string, config: {
-  apiKey: string;
-  timestamp: string;
-  signature: string;
-}): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("api_key", config.apiKey);
-  formData.append("timestamp", config.timestamp);
-  formData.append("signature", config.signature);
-  formData.append("folder", "souq-ads");
-
-  const res = await fetch(
-    `${CLOUDINARY_UPLOAD}/${cloudName}/image/upload`,
-    { method: "POST", body: formData }
-  );
-
-  if (!res.ok) {
-    let errorMessage = "Cloudinary upload failed";
-    try {
-      const errorData = await res.json();
-      errorMessage = errorData.error?.message || errorMessage;
-    } catch {
-      // Fall back to default
-    }
-    throw new Error(errorMessage);
-  }
-
-  const data = await res.json();
-  return data.secure_url;
-}
-
-/**
- * Fetch Cloudinary upload signature from server.
- */
-async function fetchUploadSignature(): Promise<{
-  cloudName: string;
-  apiKey: string;
-  timestamp: string;
-  signature: string;
-}> {
+async function getUploadSignature(): Promise<CloudinaryConfig & { cloudName: string }> {
   const res = await fetch(SIGNATURE_API);
   if (!res.ok) {
-    let errorMessage = "Failed to get upload signature";
+    let msg = "Failed to get upload signature";
     try {
-      const errorData = await res.json();
-      errorMessage = errorData.error || errorMessage;
+      const d = await res.json();
+      msg = d.error || msg;
     } catch {
-      // Fall back to default
+      // fallback
     }
-    throw new Error(errorMessage);
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -96,7 +56,7 @@ export function AdForm({
 
   // Preview URLs (blob: for new files, cloudinary: for existing/uploaded)
   const [images, setImages] = useState<string[]>(product?.images ?? []);
-  // Actual Cloudinary URLs to send to the API — populated at upload time (NOT submit time)
+  // Actual Cloudinary URLs to send to the API
   const [uploadedUrls, setUploadedUrls] = useState<string[]>(product?.images ?? []);
   const [title, setTitle] = useState(product?.title ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
@@ -111,9 +71,11 @@ export function AdForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasSubmittedRef = useRef(false);
+  // Per-image upload status
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   // Cached signature to avoid redundant calls during batch upload
   const signatureCacheRef = useRef<{
-    data: { cloudName: string; apiKey: string; timestamp: string; signature: string };
+    data: CloudinaryConfig & { cloudName: string };
     expiresAt: number;
   } | null>(null);
 
@@ -131,7 +93,59 @@ export function AdForm({
     label: resolveCategoryName(c, locale),
   }));
 
-  // File input handler — uploads directly to Cloudinary, stores both preview and real URLs
+  /**
+   * Upload files using the production queue system.
+   * - Controlled concurrency (max 3 parallel)
+   * - Automatic retry (3 attempts with exponential backoff)
+   * - Per-file progress tracking
+   */
+  const uploadFilesToCloudinary = useCallback(
+    async (files: File[]) => {
+      // Get or refresh signature
+      let sigData = signatureCacheRef.current;
+      if (!sigData || Date.now() > sigData.expiresAt) {
+        try {
+          sigData = {
+            data: await getUploadSignature(),
+            expiresAt: Date.now() + 5 * 60 * 1000, // 5 min cache
+          };
+          signatureCacheRef.current = sigData;
+        } catch (err) {
+          console.error("[AdForm] Signature fetch failed:", err);
+          throw err;
+        }
+      }
+
+      const config = sigData.data;
+
+      // Create upload tasks with per-file tracking (fresh queue per batch)
+      const batchQueue = new UploadQueue();
+      const tasks = files.map((file) => batchQueue.add(file, config));
+
+      // Wait for all uploads
+      const results = await Promise.allSettled(
+        tasks.map((t) => t.promise)
+      );
+
+      // Collect successful URLs and track failures
+      const urls: string[] = [];
+      const failedItems: UploadItem[] = [];
+
+      tasks.forEach((task, i) => {
+        const result = results[i];
+        if (result.status === "fulfilled") {
+          urls.push(result.value);
+        } else {
+          failedItems.push(task.item);
+        }
+      });
+
+      return { urls, failedItems, allTasks: tasks };
+    },
+    []
+  );
+
+  // File input handler — uploads directly to Cloudinary via queue
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -140,71 +154,66 @@ export function AdForm({
     const totalFiles = Math.min(files.length, remainingSlots);
     if (totalFiles === 0) return;
 
+    const newFiles = Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, totalFiles);
+    if (newFiles.length === 0) return;
+
     setIsUploading(true);
     setUploadProgress(0);
+    setSubmitError(null);
 
-    const previewUrls: string[] = [];
-    const remainingFiles: File[] = [];
-
-    for (let i = 0; i < totalFiles; i++) {
-      const file = files[i];
-      if (!file.type.startsWith("image/")) continue;
-      previewUrls.push(URL.createObjectURL(file));
-      remainingFiles.push(file);
-    }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-
-    // Get fresh signature (cached for 5 minutes to avoid per-file calls)
-    let signatureData = signatureCacheRef.current;
-    if (!signatureData || Date.now() > signatureData.expiresAt) {
-      try {
-        signatureData = {
-          data: await fetchUploadSignature(),
-          expiresAt: Date.now() + 5 * 60 * 1000, // 5 min cache
-        };
-      } catch (err) {
-        console.error("[AdForm] Signature fetch failed:", err);
-        setSubmitError(err instanceof Error ? err.message : "Failed to initialize upload");
-        previewUrls.forEach((url) => URL.revokeObjectURL(url));
-        setIsUploading(false);
-        return;
-      }
-    }
+    // Create preview URLs and initial upload items
+    const previews: string[] = newFiles.map((f) => URL.createObjectURL(f));
+    const initialItems: UploadItem[] = newFiles.map((f) => ({
+      file: f,
+      status: "pending",
+      progress: 0,
+    }));
 
     try {
-      const { cloudName, apiKey, timestamp, signature } = signatureData.data;
-      const config = { apiKey, timestamp, signature };
+      // Track upload items for UI
+      const { urls, failedItems, allTasks } = await uploadFilesToCloudinary(newFiles);
 
-      // Upload all files in parallel directly to Cloudinary
-      const urls = await Promise.all(
-        remainingFiles.map(async (file) => {
-          const progressBase = remainingFiles.length > 1
-            ? Math.round((remainingFiles.indexOf(file) / remainingFiles.length) * 90)
-            : 10;
-          setUploadProgress(progressBase);
-          return uploadToCloudinary(file, cloudName, config);
-        })
-      );
+      // Update upload items with actual status
+      allTasks.forEach((task, i) => {
+        initialItems[i] = { ...task.item };
+      });
+      setUploadItems((prev) => [...prev, ...initialItems]);
 
-      setUploadProgress(100);
+      if (urls.length === 0) {
+        throw new Error("All images failed to upload");
+      }
 
       // Store real Cloudinary URLs
       setUploadedUrls((prev) => [...prev, ...urls]);
       // Store preview URLs (will be replaced by Cloudinary URLs on submit)
-      setImages((prev) => [...prev, ...previewUrls]);
+      setImages((prev) => [...prev, ...previews]);
+
+      setUploadProgress(100);
+
+      // If some failed, show partial success
+      if (failedItems.length > 0) {
+        setSubmitError(
+          `Uploaded ${urls} image(s). ${failedItems.length} image(s) failed. You can retry later.`
+        );
+      }
     } catch (err) {
       console.error("[AdForm] Upload failed:", err);
       setSubmitError(err instanceof Error ? err.message : "Image upload failed");
       // Remove preview URLs on failure
-      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+      previews.forEach((url) => URL.revokeObjectURL(url));
+      // Mark all items as failed
+      setUploadItems((prev) =>
+        prev.map((item, i) =>
+          i > prev.length - newFiles.length
+            ? { ...item, status: "failed" as UploadStatus, error: "Upload failed" }
+            : item
+        )
+      );
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [uploadedUrls.length]);
+  }, [uploadedUrls.length, uploadFilesToCloudinary]);
 
   const triggerFileInput = () => {
     fileInputRef.current?.click();
@@ -216,14 +225,57 @@ export function AdForm({
       if (removed.startsWith("blob:")) {
         URL.revokeObjectURL(removed);
       }
-      // Also remove from uploadedUrls if it's a cloudinary URL
-      setUploadedUrls((prevUrls) => {
-        const newUrls = prevUrls.filter((_, i) => i !== index);
-        return newUrls;
-      });
+      setUploadedUrls((prevUrls) => prevUrls.filter((_, i) => i !== index));
+      setUploadItems((prevItems) => prevItems.filter((_, i) => i !== index));
       return prev.filter((_, i) => i !== index);
     });
   };
+
+  /**
+   * Retry a failed upload.
+   */
+  const retryUpload = useCallback(
+    async (itemIndex: number, file: File) => {
+      try {
+        let sigData = signatureCacheRef.current;
+        if (!sigData || Date.now() > sigData.expiresAt) {
+          sigData = {
+            data: await getUploadSignature(),
+            expiresAt: Date.now() + 5 * 60 * 1000,
+          };
+          signatureCacheRef.current = sigData;
+        }
+
+        const batchQueue = new UploadQueue();
+        const { promise, item } = batchQueue.add(file, sigData.data);
+
+        // Update UI with uploading status
+        setUploadItems((prev) =>
+          prev.map((p, i) => (i === itemIndex ? { ...p, status: "uploading" as UploadStatus, progress: 5 } : p))
+        );
+
+        const url = await promise;
+
+        setUploadedUrls((prev) => [...prev, url]);
+        const preview = URL.createObjectURL(file);
+        setImages((prev) => [...prev, preview]);
+
+        setUploadItems((prev) =>
+          prev.map((p, i) => (i === itemIndex ? { ...p, status: "success" as UploadStatus, url, progress: 100 } : p))
+        );
+      } catch (err) {
+        console.error("[AdForm] Retry failed:", err);
+        setUploadItems((prev) =>
+          prev.map((p, i) =>
+            i === itemIndex
+              ? { ...p, status: "failed" as UploadStatus, error: err instanceof Error ? err.message : "Retry failed" }
+              : p
+          )
+        );
+      }
+    },
+    []
+  );
 
   // Image load error handler — show placeholder
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -257,7 +309,6 @@ export function AdForm({
 
     try {
       // Images are already uploaded to Cloudinary — just send the URLs
-      // uploadedUrls contains all Cloudinary URLs from pre-upload
       const imageUrls = uploadedUrls;
 
       const url = mode === "create" ? "/api/ads" : `/api/ads/${product?.id}`;
@@ -315,6 +366,47 @@ export function AdForm({
     }
   };
 
+  // Check if any uploads are still in progress
+  const hasActiveUploads = uploadItems.some(
+    (item) => item.status === "uploading" || item.status === "pending"
+  );
+
+  // Check if any uploads have failed
+  const hasFailedUploads = uploadItems.some((item) => item.status === "failed");
+
+  // Overall upload progress
+  const avgProgress =
+    uploadItems.length > 0
+      ? Math.round(uploadItems.reduce((sum, item) => sum + item.progress, 0) / uploadItems.length)
+      : 0;
+
+  // Status icon per upload item
+  const getStatusIcon = (status: UploadStatus) => {
+    switch (status) {
+      case "uploading":
+        return "hourglass_empty";
+      case "success":
+        return "check_circle";
+      case "failed":
+        return "error";
+      default:
+        return "image";
+    }
+  };
+
+  const getStatusColor = (status: UploadStatus) => {
+    switch (status) {
+      case "uploading":
+        return "text-warning";
+      case "success":
+        return "text-success";
+      case "failed":
+        return "text-error";
+      default:
+        return "text-on-surface-variant";
+    }
+  };
+
   return (
     <form onSubmit={onSubmit} className="space-y-lg" noValidate>
       {/* Image Upload */}
@@ -323,6 +415,7 @@ export function AdForm({
           {t("images")}
         </span>
         <div className="flex flex-wrap gap-md">
+          {/* Uploaded/preview images */}
           {images.map((src, i) => (
             <div
               key={`${src}-${i}`}
@@ -346,6 +439,22 @@ export function AdForm({
               >
                 <Icon name="close" size={16} />
               </button>
+
+              {/* Upload status badge */}
+              {uploadItems[i] && (
+                <div
+                  className={cn(
+                    "absolute bottom-1 start-1 w-6 h-6 rounded-full bg-scrim/80 flex items-center justify-center",
+                    getStatusColor(uploadItems[i].status)
+                  )}
+                >
+                  <Icon
+                    name={getStatusIcon(uploadItems[i].status)}
+                    size={14}
+                    className="text-white"
+                  />
+                </div>
+              )}
             </div>
           ))}
 
@@ -359,6 +468,7 @@ export function AdForm({
             aria-hidden="true"
           />
 
+          {/* Add photos button */}
           <button
             type="button"
             onClick={triggerFileInput}
@@ -373,6 +483,46 @@ export function AdForm({
             <span className="text-label-md font-label-md">{t("addPhotos")}</span>
           </button>
         </div>
+
+        {/* Per-image upload status */}
+        {uploadItems.length > 0 && (
+          <div className="mt-md space-y-1">
+            {uploadItems.map((item, i) => (
+              <div
+                key={`${item.file.name}-${i}`}
+                className="flex items-center gap-xs text-body-xs"
+              >
+                <Icon
+                  name={getStatusIcon(item.status)}
+                  size={14}
+                  className={getStatusColor(item.status)}
+                />
+                <span className="text-on-surface-variant truncate flex-1">
+                  {item.file.name.length > 20
+                    ? item.file.name.slice(0, 20) + "..."
+                    : item.file.name}
+                </span>
+                {item.status === "uploading" && (
+                  <span className="text-on-surface-variant w-8 text-end">
+                    {item.progress}%
+                  </span>
+                )}
+                {item.status === "failed" && (
+                  <button
+                    type="button"
+                    onClick={() => retryUpload(i, item.file)}
+                    className="text-primary font-label-md"
+                  >
+                    {t("retry") || "Retry"}
+                  </button>
+                )}
+                {item.status === "success" && (
+                  <span className="text-on-surface-variant">✓</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {errors.images && (
           <p className="flex items-center gap-xs text-body-sm font-body-sm text-error ms-xs">
@@ -456,24 +606,24 @@ export function AdForm({
 
       {/* Submit Buttons */}
       <div className="flex gap-md pt-sm">
-        {/* Upload progress indicator */}
+        {/* Overall upload progress indicator */}
         {isUploading && (
           <div className="flex-1 py-md">
             <div className="flex items-center gap-sm">
               <div className="flex-1 h-2 bg-surface-container rounded-full overflow-hidden">
                 <div
                   className="h-full bg-primary transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
+                  style={{ width: `${avgProgress}%` }}
                 />
               </div>
-              <span className="text-label-md text-on-surface-variant">{uploadProgress}%</span>
+              <span className="text-label-md text-on-surface-variant">{avgProgress}%</span>
             </div>
           </div>
         )}
 
         <button
           type="submit"
-          disabled={isSubmitting || isUploading}
+          disabled={isSubmitting || isUploading || hasActiveUploads || hasFailedUploads}
           className="flex items-center justify-center gap-sm py-md px-xl bg-primary text-on-primary rounded-xl font-label-md text-label-md font-bold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-60 min-w-[200px]"
         >
           {isSubmitting ? (

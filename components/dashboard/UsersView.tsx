@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/routing";
 import { ROUTES } from "@/constants/routes";
 import { DataTable, type Column } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/Badge";
+import { SafeAvatar } from "@/components/ui/SafeImage";
 import { formatDate } from "@/utils/format";
 import type { DirectoryUser } from "@/types";
 import type { Locale } from "@/i18n/routing";
@@ -83,13 +83,7 @@ export function UsersView({ initialUsers }: { initialUsers: UserSummary[] }) {
       header: t("users.name"),
       cell: (user) => (
         <div className="flex items-center gap-sm">
-          {user.avatar ? (
-            <Image src={user.avatar} alt="" width={36} height={36} className="rounded-full object-cover" />
-          ) : (
-            <div className="rounded-full bg-primary/20 flex items-center justify-center" style={{ width: 36, height: 36 }}>
-              <span className="text-on-primary text-label-sm font-bold">{user.name?.[0]?.toUpperCase() ?? "?"}</span>
-            </div>
-          )}
+          <SafeAvatar src={user.avatar} name={user.name} width={36} height={36} />
           <div>
             <div className="font-medium text-on-surface">{user.name}</div>
             <div className="text-label-sm text-on-surface-variant">{user.email}</div>

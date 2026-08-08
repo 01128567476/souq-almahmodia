@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { CommentComposer } from "@/components/engagement/CommentComposer";
 import { canDeleteComment } from "@/utils/permissions";
 import { formatRelativeTime } from "@/utils/format";
 import { cn } from "@/utils/cn";
+import { SafeAvatar } from "@/components/ui/SafeImage";
 import type { Locale } from "@/i18n/routing";
 import type { Comment, User } from "@/types";
 
@@ -63,24 +63,13 @@ export function CommentItem({
         )}
       >
         <div className="flex items-start gap-2 sm:gap-2.5">
-          {comment.author.avatar ? (
-            <Image
-              src={comment.author.avatar}
-              alt=""
-              width={isReply ? 28 : 34}
-              height={isReply ? 28 : 34}
-              className="rounded-full object-cover shrink-0"
-            />
-          ) : (
-            <div
-              className="rounded-full bg-primary/20 flex items-center justify-center shrink-0"
-              style={{ width: isReply ? 28 : 34, height: isReply ? 28 : 34 }}
-            >
-              <span className="text-on-primary text-label-xs font-bold">
-                {comment.author.name?.[0]?.toUpperCase() ?? "?"}
-              </span>
-            </div>
-          )}
+          <SafeAvatar
+            src={comment.author.avatar}
+            name={comment.author.name}
+            width={isReply ? 28 : 34}
+            height={isReply ? 28 : 34}
+            className="shrink-0"
+          />
           <div className="flex-1 min-w-0">
             {/* Username + timestamp on one tight line */}
             <div className="flex flex-wrap items-center gap-x-[10px] gap-y-0.5">

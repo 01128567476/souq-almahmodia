@@ -4,13 +4,30 @@ import { favoriteRepository } from "@/services/repositories/favoriteRepository";
 import { commentRepository } from "@/services/repositories/commentRepository";
 import type { EngagementStats } from "@/types";
 
+/**
+ * GET /api/ads/stats
+ *   Returns engagement stats for a batch of ads.
+ *
+ * Response format:
+ * {
+ *   stats: {
+ *     "<adId>": { adId, views, reactions, comments, favorites, viewerHasFavorited }
+ *   }
+ * }
+ *
+ * Always returns a valid stats object — never null/undefined.
+ */
+
 export async function GET(request: NextRequest) {
   try {
     const adIds = request.nextUrl.searchParams.get("ids")?.split(",") ?? [];
     const viewerId = request.nextUrl.searchParams.get("viewerId");
 
+    // Default empty stats object
+    const defaultStats: Record<string, EngagementStats> = {};
+
     if (!adIds.length || adIds[0] === "") {
-      return NextResponse.json({ success: true, data: [] });
+      return NextResponse.json({ stats: defaultStats });
     }
 
     const statsList = await Promise.all(
@@ -35,11 +52,15 @@ export async function GET(request: NextRequest) {
       }),
     );
 
-    return NextResponse.json({ success: true, data: statsList });
+    // Convert array to record keyed by adId
+    const statsRecord: Record<string, EngagementStats> = {};
+    for (const stat of statsList) {
+      statsRecord[stat.adId] = stat;
+    }
+
+    return NextResponse.json({ stats: statsRecord });
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Failed to fetch stats" },
-      { status: 500 },
-    );
+    // Return default empty stats on error
+    return NextResponse.json({ stats: {} });
   }
 }

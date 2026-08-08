@@ -21,7 +21,6 @@
 
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
-import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { SearchBar } from "@/components/marketplace/SearchBar";
 import { SearchEmptyState } from "@/components/marketplace/SearchEmptyState";
@@ -31,6 +30,7 @@ import { ROUTES } from "@/constants/routes";
 import { useGlobalSearch } from "@/hooks/useGlobalSearch";
 import type { Product, SearchResultAd, SearchResultUser } from "@/types";
 import { ProductCard } from "@/components/marketplace/ProductCard";
+import { SafeAvatar, SafeProductImage } from "@/components/ui/SafeImage";
 
 export function SearchView({ products, query: initialQuery }: { products: Product[]; query?: string }) {
   const t = useTranslations();
@@ -187,19 +187,13 @@ export function SearchView({ products, query: initialQuery }: { products: Produc
                     onClick={() => router.push(`/u/${user.username}`)}
                     className="flex items-center gap-4 p-4 rounded-xl border border-outline-variant bg-surface-container-lowest hover:bg-surface-container transition-all text-start group"
                   >
-                    {user.avatar ? (
-                      <Image
-                        src={user.avatar}
-                        alt={user.displayName}
-                        width={56}
-                        height={56}
-                        className="flex-shrink-0 h-14 w-14 rounded-full object-cover ring-2 border border-outline"
-                      />
-                    ) : (
-                      <div className="flex-shrink-0 h-14 w-14 rounded-full bg-primary/20 flex items-center justify-center ring-2 border border-outline">
-                        <span className="text-on-primary text-label-md font-bold">{user.displayName?.[0]?.toUpperCase() ?? "?"}</span>
-                      </div>
-                    )}
+                    <SafeAvatar
+                      src={user.avatar}
+                      name={user.displayName}
+                      width={56}
+                      height={56}
+                      className="flex-shrink-0 h-14 w-14 ring-2 border border-outline"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="text-body-sm font-body-sm font-semibold text-on-surface truncate">
                         <HighlightText text={user.displayName} query={displayQuery} />
@@ -240,19 +234,12 @@ export function SearchView({ products, query: initialQuery }: { products: Produc
                   >
                     {/* Ad Image */}
                     <div className="relative aspect-square overflow-hidden bg-surface-container">
-                      {ad.image ? (
-                        <Image
-                          src={ad.image}
-                          alt={ad.title}
-                          fill
-                          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, (max-width: 1280px) 33vw, 25vw"
-                          className="object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                      ) : (
-                        <div className="flex items-center justify-center h-full w-full">
-                          <Icon name="image_not_supported" size={32} className="text-on-surface-variant" />
-                        </div>
-                      )}
+                      <SafeProductImage
+                        src={ad.image}
+                        alt={ad.title}
+                        fill
+                        className="object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
                     </div>
                     {/* Ad Info */}
                     <div className="p-4 flex-1 flex flex-col">

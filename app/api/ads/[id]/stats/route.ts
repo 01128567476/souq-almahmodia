@@ -1,9 +1,13 @@
 /**
  * GET /api/ads/[id]/stats
- *   Returns engagement stats for an ad: views, reactions, comments, favorites.
+ *   Returns engagement stats for a single ad.
  *
- * Backend-ready: delegates entirely to repositories.
- * When Drizzle + PostgreSQL is ready, only the repositories change.
+ * Response format:
+ * {
+ *   stats: { adId, views, reactions, comments, favorites, viewerHasFavorited }
+ * }
+ *
+ * Always returns a valid stats object — never null/undefined.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -11,10 +15,6 @@ import { reactionRepository } from "@/services/repositories/reactionRepository";
 import { favoriteRepository } from "@/services/repositories/favoriteRepository";
 import { commentRepository } from "@/services/repositories/commentRepository";
 import type { EngagementStats } from "@/types";
-
-/* -------------------------------------------------------------------------- */
-/* GET — Fetch engagement stats                                               */
-/* -------------------------------------------------------------------------- */
 
 export async function GET(
   _request: NextRequest,
@@ -35,18 +35,25 @@ export async function GET(
 
     const stats: EngagementStats = {
       adId: id,
-      views: 0, // TODO: Add viewRepository when needed
+      views: 0,
       reactions: reactionSummary.total,
       comments: commentCount,
       favorites: favCount,
       viewerHasFavorited: isFavorited,
     };
 
-    return NextResponse.json({ success: true, data: stats });
+    return NextResponse.json({ stats });
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Failed to fetch stats" },
-      { status: 500 },
-    );
+    // Return default stats on error
+    return NextResponse.json({
+      stats: {
+        adId: (await params).id,
+        views: 0,
+        reactions: 0,
+        comments: 0,
+        favorites: 0,
+        viewerHasFavorited: false,
+      },
+    });
   }
 }

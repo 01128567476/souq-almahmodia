@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/routing";
@@ -9,6 +8,7 @@ import { ROUTES } from "@/constants/routes";
 import { DataTable, type Column } from "@/components/dashboard/DataTable";
 import { Badge } from "@/components/ui/Badge";
 import { Icon } from "@/components/ui/Icon";
+import { SafeAvatar, SafeProductImage } from "@/components/ui/SafeImage";
 import { AdStatusBadge, ReportStatusBadge, SeverityBadge } from "@/components/ui/StatusBadge";
 import { formatDate, formatPrice } from "@/utils/format";
 import { resolveCategoryName } from "@/utils/category";
@@ -91,13 +91,7 @@ export function UserDetailsView({ user, ads, reports, comments, activity, catego
       cell: (ad) => (
         <div className="flex items-center gap-3">
           <div className="relative h-12 w-12 overflow-hidden rounded-2xl bg-surface-container-lowest">
-            {ad.image ? (
-              <Image src={ad.image} alt={ad.title} fill sizes="48px" className="object-cover" />
-            ) : (
-              <div className="flex items-center justify-center h-full w-full">
-                <Icon name="image_not_supported" size={16} className="text-on-surface-variant" />
-              </div>
-            )}
+            <SafeProductImage src={ad.image} alt={ad.title} width={48} height={48} />
           </div>
           <div>
             <div className="font-medium text-on-surface">{ad.title}</div>
@@ -142,13 +136,7 @@ export function UserDetailsView({ user, ads, reports, comments, activity, catego
       <div className="bg-surface-container-lowest border border-outline-variant rounded-3xl p-xl">
         <div className="flex flex-col lg:flex-row gap-lg items-start lg:items-center justify-between">
           <div className="flex items-center gap-sm">
-            {currentUser.avatar ? (
-              <Image src={currentUser.avatar} alt="" width={80} height={80} className="rounded-3xl object-cover" />
-            ) : (
-              <div className="rounded-3xl bg-primary/20 flex items-center justify-center" style={{ width: 80, height: 80 }}>
-                <span className="text-on-primary text-headline-sm font-bold">{currentUser.name?.[0]?.toUpperCase() ?? "?"}</span>
-              </div>
-            )}
+            <SafeAvatar src={currentUser.avatar} name={currentUser.name} width={80} height={80} />
             <div>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-headline-lg font-headline-lg text-on-surface">{currentUser.name}</h1>

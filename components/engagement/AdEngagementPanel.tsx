@@ -11,6 +11,16 @@ import { Icon } from "@/components/ui/Icon";
 import { cn } from "@/utils/cn";
 import type { EngagementStats } from "@/types";
 
+/** Default stats fallback — ensures UI never breaks when API fails. */
+const DEFAULT_STATS: EngagementStats = {
+  adId: "",
+  views: 0,
+  reactions: 0,
+  comments: 0,
+  favorites: 0,
+  viewerHasFavorited: false,
+};
+
 /**
  * Engagement block shown below an advertisement's details: Favorite button,
  * reaction bar, and the full comments thread (with its count).
@@ -30,42 +40,41 @@ export function AdEngagementPanel({
   const { summary, react, pending: reactPending } = useReactions(adId);
 
   // Fetch initial engagement stats to get favorites state
-  const [stats, setStats] = useState<EngagementStats | null>(null);
+  // Defensive: always initialized with default to never be null
+  const [stats, setStats] = useState<EngagementStats>(() => ({ ...DEFAULT_STATS, adId }));
 
   useEffect(() => {
-    console.log("[AdEngagementPanel] useEffect triggered for adId:", adId);
     const fetchStats = async () => {
       try {
-        console.log("[AdEngagementPanel] Fetching stats for adId:", adId);
-        const res = await fetch(`/api/ads/stats?ids=${adId}`);
-        console.log("[AdEngagementPanel] Stats API response status:", res.status);
+        const res = await fetch(`/api/ads/${adId}/stats`);
+        if (!res.ok) return;
         const data = await res.json();
-        console.log("[AdEngagementPanel] Stats API response data:", data);
-        const adStats = data?.stats?.[adId] ?? null;
-        console.log("[AdEngagementPanel] Extracted adStats:", adStats);
-        setStats(adStats);
-      } catch (err) {
-        console.error("[AdEngagementPanel] Failed to fetch stats:", err);
-        // Silently fail — stats are optional
+        // Extract from { stats: EngagementStats }
+        const statsData = data?.stats ?? null;
+        if (statsData) {
+          setStats(statsData);
+        }
+        // Fallback: if stats is missing, keep current state (already has defaults)
+      } catch {
+        // Silently fail — stats are optional, defaults already set
       }
     };
     fetchStats();
   }, [adId]);
 
-  const favorited = stats?.viewerHasFavorited ?? false;
-  const favoriteCount = stats?.favorites ?? 0;
+  // Defensive: ensure stats is never null
+  const safeStats = stats || { ...DEFAULT_STATS, adId };
 
-  console.log("[AdEngagementPanel] Render: stats=", stats, "favorited=", favorited, "favoriteCount=", favoriteCount, "isAuthenticated=", isAuthenticated);
+  const favorited = safeStats.viewerHasFavorited ?? false;
+  const favoriteCount = safeStats.favorites ?? 0;
 
   const { toggle: toggleFavorite, pending: favPending } = useFavorite(
     adId,
     favorited,
     favoriteCount,
     (patch) => {
-      console.log("[AdEngagementPanel] useFavorite onChange called with patch:", patch);
       setStats((prev) => {
         const newStats = prev ? { ...prev, ...patch } : prev;
-        console.log("[AdEngagementPanel] setStats called, new stats:", newStats);
         return newStats;
       });
     },

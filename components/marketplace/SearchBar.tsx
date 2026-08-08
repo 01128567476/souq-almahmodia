@@ -22,8 +22,7 @@
 
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
-import Image from "next/image";
+import { useRef, useEffect, useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/routing";
 import { ROUTES } from "@/constants/routes";
@@ -31,7 +30,7 @@ import { Icon } from "@/components/ui/Icon";
 import { cn } from "@/utils/cn";
 import { HighlightText } from "@/components/marketplace/HighlightText";
 import type { Product, SearchResultAd, SearchResultUser } from "@/types";
-import { useState } from "react";
+import { SafeAvatar, SafeProductImage } from "@/components/ui/SafeImage";
 import { rankAdsByQuery } from "@/utils/adSearch";
 
 export interface SearchBarProps {
@@ -258,19 +257,13 @@ export function SearchBar({
                       aria-selected="false"
                       className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-surface-container-low border-b border-outline-variant/50 last:border-b-0"
                     >
-                      {user.avatar ? (
-                        <Image
-                          src={user.avatar}
-                          alt={user.displayName}
-                          width={40}
-                          height={40}
-                          className="flex-shrink-0 h-10 w-10 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex-shrink-0 h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                          <span className="text-on-primary text-label-sm font-bold">{user.displayName?.[0]?.toUpperCase() ?? "?"}</span>
-                        </div>
-                      )}
+                      <SafeAvatar
+                        src={user.avatar}
+                        name={user.displayName}
+                        width={40}
+                        height={40}
+                        className="flex-shrink-0 h-10 w-10 rounded-full object-cover"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="text-body-sm font-body-sm text-on-surface">
                           <HighlightText text={user.displayName} query={query} />
@@ -306,19 +299,13 @@ export function SearchBar({
                       aria-selected="false"
                       className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-surface-container-low border-b border-outline-variant/50 last:border-b-0"
                     >
-                      {ad.image ? (
-                        <Image
-                          src={ad.image}
-                          alt={ad.title}
-                          width={48}
-                          height={48}
-                          className="flex-shrink-0 h-12 w-12 rounded-lg object-cover"
-                        />
-                      ) : (
-                        <div className="flex-shrink-0 h-12 w-12 rounded-lg bg-surface-container flex items-center justify-center">
-                          <Icon name="image_not_supported" size={20} className="text-on-surface-variant" />
-                        </div>
-                      )}
+                      <SafeProductImage
+                        src={ad.image}
+                        alt={ad.title}
+                        width={48}
+                        height={48}
+                        className="flex-shrink-0 h-12 w-12 rounded-lg object-cover"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="text-body-sm font-body-sm text-on-surface truncate">
                           <HighlightText text={ad.title} query={query} />
@@ -409,19 +396,13 @@ function LegacyProductDropdown({
             aria-selected="false"
             className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-surface-container-low"
           >
-            {product.image ? (
-              <Image
-                src={product.image}
-                alt={product.title}
-                width={48}
-                height={48}
-                className="flex-shrink-0 rounded-lg object-cover"
-              />
-            ) : (
-              <div className="flex-shrink-0 h-12 w-12 rounded-lg bg-surface-container flex items-center justify-center">
-                <Icon name="image_not_supported" size={20} className="text-on-surface-variant" />
-              </div>
-            )}
+            <SafeProductImage
+              src={product.image}
+              alt={product.title}
+              width={48}
+              height={48}
+              className="flex-shrink-0 rounded-lg object-cover"
+            />
             <div className="min-w-0 flex-1">
               <div className="text-body-sm font-body-sm text-on-surface">
                 <HighlightText text={product.title} query={query} />

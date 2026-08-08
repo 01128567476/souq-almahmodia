@@ -40,6 +40,7 @@ export function useEngagementStatsBatch(adIds: string[]): UseEngagementStatsBatc
     fetch(`/api/ads/stats?ids=${encodeURIComponent(key)}&viewerId=${viewerId ?? ""}`)
       .then((res) => res.json())
       .then((result) => {
+        // API returns { stats: { adId: EngagementStats } }
         if (active) setStats(result?.stats ?? {});
       })
       .finally(() => {

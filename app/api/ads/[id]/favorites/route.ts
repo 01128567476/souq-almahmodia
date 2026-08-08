@@ -1,12 +1,12 @@
 /**
  * GET /api/ads/[id]/favorites
- *   Returns the number of favorites for an ad, and whether the viewer has favorited.
+ *   Returns the favorite count and whether the viewer has favorited.
  *
  * POST /api/ads/[id]/favorites
- *   Adds the viewer's favorite for an ad.
- *
- * DELETE /api/ads/[id]/favorites
- *   Removes the viewer's favorite for an ad.
+ *   Toggles the viewer's favorite for an ad.
+ *   - If favorite exists → removes it
+ *   - If favorite doesn't exist → creates it
+ *   - Returns consistent response: { favorited, count }
  *
  * Production-only. No mock data. No temporary code.
  * User identity derived from Auth.js session.
@@ -44,7 +44,7 @@ export async function GET(
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                                          POST — Add favorite */
+/* POST — Toggle favorite (add if absent, remove if present)                 */
 /* -------------------------------------------------------------------------- */
 
 export async function POST(
@@ -61,60 +61,43 @@ export async function POST(
         { success: false, error: "Authentication required" },
         { status: 401 },
       );
-
     }
 
-    const added = await favoriteRepository.add({
-      userId: currentUser.id,
-      adId: id,
+    const userId = currentUser.id;
+    const adId = id;
+
+    // Check if already favorited
+    const alreadyFavorited = await favoriteRepository.isFavorited(adId, userId);
+
+    if (alreadyFavorited) {
+      // Remove the favorite
+      await favoriteRepository.remove(adId, userId);
+      const count = await favoriteRepository.countByAd(adId);
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          favorited: false,
+          count,
+        },
+      });
+    }
+
+    // Add the favorite (uses ON CONFLICT DO NOTHING — safe against race conditions)
+    const added = await favoriteRepository.add({ userId, adId });
+
+    const count = await favoriteRepository.countByAd(adId);
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        favorited: added,
+        count,
+      },
     });
-
-    if (!added) {
-      return NextResponse.json(
-        { success: false, error: "Already favorited" },
-        { status: 409 },
-      );
-    }
-
-    const count = await favoriteRepository.countByAd(id);
-
-    return NextResponse.json({ success: true, data: { count } });
   } catch {
     return NextResponse.json(
-      { success: false, error: "Failed to add favorite" },
-      { status: 500 },
-    );
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* DELETE — Remove favorite                                                     */
-/* -------------------------------------------------------------------------- */
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<NextResponse> {
-  try {
-    const { id } = await params;
-
-    // Derive userId from Auth.js session (not from client)
-    const currentUser = await getCurrentUser();
-    if (!currentUser) {
-      return NextResponse.json(
-        { success: false, error: "Authentication required" },
-        { status: 401 },
-      );
-    }
-
-    await favoriteRepository.remove(id, currentUser.id);
-
-    const count = await favoriteRepository.countByAd(id);
-
-    return NextResponse.json({ success: true, data: { count } });
-  } catch {
-    return NextResponse.json(
-      { success: false, error: "Failed to remove favorite" },
+      { success: false, error: "Failed to toggle favorite" },
       { status: 500 },
     );
   }

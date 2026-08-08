@@ -83,7 +83,13 @@ export function UsersView({ initialUsers }: { initialUsers: UserSummary[] }) {
       header: t("users.name"),
       cell: (user) => (
         <div className="flex items-center gap-sm">
-          <Image src={user.avatar} alt="" width={36} height={36} className="rounded-full object-cover" />
+          {user.avatar ? (
+            <Image src={user.avatar} alt="" width={36} height={36} className="rounded-full object-cover" />
+          ) : (
+            <div className="rounded-full bg-primary/20 flex items-center justify-center" style={{ width: 36, height: 36 }}>
+              <span className="text-on-primary text-label-sm font-bold">{user.name?.[0]?.toUpperCase() ?? "?"}</span>
+            </div>
+          )}
           <div>
             <div className="font-medium text-on-surface">{user.name}</div>
             <div className="text-label-sm text-on-surface-variant">{user.email}</div>

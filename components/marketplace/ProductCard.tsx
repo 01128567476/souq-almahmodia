@@ -122,13 +122,19 @@ export function ProductCard({
           Mobile (<640px): 150px | Tablet (640px+): 170px | Desktop (768px+): 190px */}
       <div className="relative overflow-hidden bg-surface-container-low h-[150px] sm:h-[170px] md:h-[190px]">
         <Link href={ROUTES.product(product.id)} className="block h-full w-full">
-          <Image
-            src={product.image}
-            alt={product.title}
-            fill
-            sizes="(max-width: 768px) 50vw, 25vw"
-            className="object-cover group-hover:scale-105 transition-transform duration-500"
-          />
+          {product.image ? (
+            <Image
+              src={product.image}
+              alt={product.title}
+              fill
+              sizes="(max-width: 768px) 50vw, 25vw"
+              className="object-cover group-hover:scale-105 transition-transform duration-500"
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full w-full">
+              <Icon name="image_not_supported" size={48} className="text-on-surface-variant" />
+            </div>
+          )}
         </Link>
         {product.featured && (
           <span className="absolute top-4 start-4 bg-primary text-on-primary text-[10px] font-bold px-2 py-1 rounded uppercase tracking-widest pointer-events-none">

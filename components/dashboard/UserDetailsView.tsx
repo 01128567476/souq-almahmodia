@@ -91,7 +91,13 @@ export function UserDetailsView({ user, ads, reports, comments, activity, catego
       cell: (ad) => (
         <div className="flex items-center gap-3">
           <div className="relative h-12 w-12 overflow-hidden rounded-2xl bg-surface-container-lowest">
-            <Image src={ad.image} alt={ad.title} fill sizes="48px" className="object-cover" />
+            {ad.image ? (
+              <Image src={ad.image} alt={ad.title} fill sizes="48px" className="object-cover" />
+            ) : (
+              <div className="flex items-center justify-center h-full w-full">
+                <Icon name="image_not_supported" size={16} className="text-on-surface-variant" />
+              </div>
+            )}
           </div>
           <div>
             <div className="font-medium text-on-surface">{ad.title}</div>
@@ -136,7 +142,13 @@ export function UserDetailsView({ user, ads, reports, comments, activity, catego
       <div className="bg-surface-container-lowest border border-outline-variant rounded-3xl p-xl">
         <div className="flex flex-col lg:flex-row gap-lg items-start lg:items-center justify-between">
           <div className="flex items-center gap-sm">
-            <Image src={currentUser.avatar} alt="" width={80} height={80} className="rounded-3xl object-cover" />
+            {currentUser.avatar ? (
+              <Image src={currentUser.avatar} alt="" width={80} height={80} className="rounded-3xl object-cover" />
+            ) : (
+              <div className="rounded-3xl bg-primary/20 flex items-center justify-center" style={{ width: 80, height: 80 }}>
+                <span className="text-on-primary text-headline-sm font-bold">{currentUser.name?.[0]?.toUpperCase() ?? "?"}</span>
+              </div>
+            )}
             <div>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-headline-lg font-headline-lg text-on-surface">{currentUser.name}</h1>

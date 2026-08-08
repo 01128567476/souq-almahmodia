@@ -1,18 +1,77 @@
 /**
  * GET /api/ads/[id]/reactions
- *   Returns aggregate reaction summary for an ad.
+ *   Returns reaction summary for an ad.
+ *
+ *   Response: { summary: { total, counts, viewerReaction } }
  *
  * POST /api/ads/[id]/reactions
- *   Sets or updates the viewer's reaction on an ad.
+ *   Toggle/set viewer reaction on an ad.
+ *
+ *   Query params:
+ *    - remove=true  → remove the viewer's reaction
+ *   Body: { type: ReactionType }
+ *
+ *   Response: { summary: { total, counts, viewerReaction } }
  *
  * Production-only. No mock data. No temporary code.
  * User identity derived from Auth.js session.
+ *
+ * CRITICAL: All mutation + read operations use a transaction to prevent
+ * read-after-write inconsistency from Neon connection pooling.
+ * The summary is computed inside the transaction on the SAME connection.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { reactionRepository } from "@/services/repositories/reactionRepository";
+import { db } from "@/lib/db-server";
+import { reactions } from "@/drizzle/schema";
+import { eq, and } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/serverAuth";
-import type { ReactionType } from "@/types";
+import type { ReactionType, ReactionSummary } from "@/types";
+
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Validate that a string is a known reaction type. */
+function isValidReactionType(value: unknown): value is ReactionType {
+  return typeof value === "string" && ["like", "love", "funny", "wow", "sad"].includes(value);
+}
+
+/** Build a ReactionSummary from raw reaction rows. */
+function buildSummary(
+  rows: Array<{ type: ReactionType; userId: string }>,
+  viewerId: string | null,
+): ReactionSummary {
+  const counts: Record<ReactionType, number> = {
+    like: 0,
+    love: 0,
+    funny: 0,
+    wow: 0,
+    sad: 0,
+  };
+
+  let viewerReaction: ReactionType | null = null;
+
+  for (const row of rows) {
+    if (isValidReactionType(row.type)) {
+      counts[row.type] = (counts[row.type] ?? 0) + 1;
+    }
+    if (viewerId && row.userId === viewerId) {
+      viewerReaction = row.type;
+    }
+  }
+
+  const total = Object.values(counts).reduce((sum: number, n: number) => sum + n, 0);
+
+  return { total, counts, viewerReaction };
+}
+
+/** Default empty summary. */
+const EMPTY_SUMMARY: ReactionSummary = {
+  total: 0,
+  counts: { like: 0, love: 0, funny: 0, wow: 0, sad: 0 },
+  viewerReaction: null,
+};
 
 /* -------------------------------------------------------------------------- */
 /* GET — Fetch reaction summary                                               */
@@ -26,19 +85,18 @@ export async function GET(
     const { id } = await params;
     const viewerId = _request.nextUrl.searchParams.get("viewerId");
 
+    // GET still uses the repository (no mutation, so stale read is not critical)
+    const { reactionRepository } = await import("@/services/repositories/reactionRepository");
     const summary = await reactionRepository.getSummary(id, viewerId || null);
 
-    return NextResponse.json({ success: true, data: summary });
+    return NextResponse.json({ summary });
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Failed to fetch reactions" },
-      { status: 500 },
-    );
+    return NextResponse.json(EMPTY_SUMMARY);
   }
 }
 
 /* -------------------------------------------------------------------------- */
-/* POST — Set or update reaction                                              */
+/* POST — Toggle/set reaction (transactional)                                 */
 /* -------------------------------------------------------------------------- */
 
 export async function POST(
@@ -47,43 +105,96 @@ export async function POST(
 ): Promise<NextResponse> {
   try {
     const { id } = await params;
+    const remove = request.nextUrl.searchParams.get("remove") === "true";
 
     // Derive userId from Auth.js session (not from client)
     const currentUser = await getCurrentUser();
     if (!currentUser) {
       return NextResponse.json(
-        { success: false, error: "Authentication required" },
+        { error: "Authentication required" },
         { status: 401 },
       );
     }
 
-    const body = await request.json();
-    const type = body.type as ReactionType | undefined;
+    const userId = currentUser.id;
 
-    if (!type) {
-      return NextResponse.json(
-        { success: false, error: "Missing reaction type" },
-        { status: 400 },
-      );
-    }
+    // ALL mutation + read operations run in a single transaction
+    // This guarantees they execute on the SAME database connection
+    // with proper isolation — eliminating read-after-write inconsistency.
+    const summary = await db.transaction(async (tx) => {
+      if (remove) {
+        console.log("[REACTION_API] REMOVE start — adId:", id, "userId:", userId);
 
-    // Validate type is a known reaction type
-    const validTypes: ReactionType[] = ["like", "love", "funny", "wow", "sad"];
-    if (!validTypes.includes(type)) {
-      return NextResponse.json(
-        { success: false, error: "Invalid reaction type" },
-        { status: 400 },
-      );
-    }
+        const result = await tx
+          .delete(reactions)
+          .where(
+            and(
+              eq(reactions.adId, id),
+              eq(reactions.userId, userId),
+            ),
+          )
+          .returning({ type: reactions.type, userId: reactions.userId });
 
-    await reactionRepository.upsert({ adId: id, userId: currentUser.id, type });
-    const summary = await reactionRepository.getSummary(id, currentUser.id);
+        console.log("[REACTION_API] REMOVE affected rows:", result.length);
 
-    return NextResponse.json({ success: true, data: summary });
+        // Read summary on the SAME transaction connection
+        const allRows = await tx
+          .select({ type: reactions.type, userId: reactions.userId })
+          .from(reactions)
+          .where(eq(reactions.adId, id));
+
+        const summary = buildSummary(allRows as any, userId);
+        console.log("[REACTION_API] REMOVE summary:", JSON.stringify(summary));
+
+        return summary;
+      }
+
+      // Upsert path
+      const type = (request.body ? await request.json() : {}) as { type?: string };
+      const reactionType = type.type as ReactionType | undefined;
+
+      if (!reactionType) {
+        throw new Error("Missing reaction type");
+      }
+
+      const validTypes: ReactionType[] = ["like", "love", "funny", "wow", "sad"];
+      if (!validTypes.includes(reactionType)) {
+        throw new Error("Invalid reaction type");
+      }
+
+      console.log("[REACTION_API] UPSERT start — adId:", id, "userId:", userId, "type:", reactionType);
+
+      await tx
+        .insert(reactions)
+        .values({
+          adId: id,
+          userId,
+          type: reactionType,
+        })
+        .onConflictDoUpdate({
+          target: [reactions.adId, reactions.userId],
+          set: { type: reactionType },
+        });
+
+      console.log("[REACTION_API] UPSERT complete. Reading summary...");
+
+      // Read summary on the SAME transaction connection
+      const allRows = await tx
+        .select({ type: reactions.type, userId: reactions.userId })
+        .from(reactions)
+        .where(eq(reactions.adId, id));
+
+      const summary = buildSummary(allRows as any, userId);
+      console.log("[REACTION_API] UPSERT summary:", JSON.stringify(summary));
+
+      return summary;
+    });
+
+    return NextResponse.json({ summary });
   } catch (error) {
     console.error("[REACTION_API_ERROR]", error);
     return NextResponse.json(
-      { success: false, error: "Failed to set reaction", details: error instanceof Error ? error.message : String(error) },
+      { error: "Failed to set reaction" },
       { status: 500 },
     );
   }

@@ -9,6 +9,15 @@ import { Icon } from "@/components/ui/Icon";
 import { cn } from "@/utils/cn";
 import type { ReactionSummary, ReactionType } from "@/types";
 
+/** Map reaction type to emoji for display. */
+const REACTION_EMOJI: Record<ReactionType, string> = {
+  like: "\uD83D\uDC4D", // 👍
+  love: "\u2764\uFE0F", // ❤️
+  funny: "\uD83D\uDE02", // 😂
+  wow: "\uD83D\uDE2E", // 😮
+  sad: "\uD83D\uDE22", // 😢
+};
+
 /**
  * Facebook-style reaction control for one advertisement.
  *
@@ -78,43 +87,35 @@ export function ReactionBar({
   };
 
   const requireAuth = (): boolean => {
-    console.log("[ReactionBar] requireAuth() called, isAuthenticated:", isAuthenticated);
     if (isAuthenticated) return true;
-    // Show visual feedback before redirect
     alert(t("loginRequired"));
     router.push(`${ROUTES.login}?next=${encodeURIComponent(`/product/${adId}`)}`);
     return false;
   };
 
-  const pick = (type: ReactionType) => {
-    console.log("[ReactionBar] pick() called, type:", type, "isAuthenticated:", isAuthenticated);
+  const pick = (type: ReactionType, e: React.MouseEvent) => {
+    e.stopPropagation();
     setOpen(false);
-    if (!requireAuth()) {
-      console.log("[ReactionBar] requireAuth failed, aborting pick");
-      return;
-    }
-    console.log("[ReactionBar] Calling onReact with type:", type);
+    if (!requireAuth()) return;
     onReact(type); // toggles: re-selecting the active reaction removes it.
   };
 
   // Clicking the trigger: on a reacted item toggles it off; otherwise opens picker.
   const onTriggerClick = () => {
-    console.log("[ReactionBar] onTriggerClick() called, summary:", summary);
-    if (!requireAuth()) {
-      console.log("[ReactionBar] requireAuth failed in trigger, aborting");
-      return;
-    }
-    if (summary?.viewerReaction) {
-      console.log("[ReactionBar] User has existing reaction:", summary.viewerReaction, "toggling it off");
-      onReact(summary.viewerReaction);
+    if (!requireAuth()) return;
+    // If user has an existing reaction, remove it; otherwise open picker
+    const viewerReaction = summary?.viewerReaction;
+    if (viewerReaction) {
+      onReact(viewerReaction);
     } else {
-      console.log("[ReactionBar] No existing reaction, opening picker");
       setOpen((v) => !v);
     }
   };
 
+  // Determine which reaction is currently active
   const active = summary?.viewerReaction ?? null;
   const activeConfig = active ? REACTION_BY_TYPE[active] : null;
+  const activeEmoji = active ? REACTION_EMOJI[active] : "\uD83D\uDC4D";
 
   return (
     <div className="flex flex-wrap items-center gap-md">
@@ -146,11 +147,8 @@ export function ReactionBar({
               aria-checked={active === r.type}
               aria-label={t(r.labelKey)}
               title={!isAuthenticated ? t("loginRequired") : t(r.labelKey)}
-              onClick={(e) => {
-                console.log("[ReactionBar] Emoji button clicked, type:", r.type, "disabled:", !isAuthenticated, "open:", open);
-                pick(r.type);
-              }}
-              disabled={!isAuthenticated}
+              onClick={(e) => pick(r.type, e)}
+              disabled={!isAuthenticated || pending}
               className={cn(
                 "grid h-10 w-10 place-items-center rounded-full text-2xl transition-transform duration-150 hover:-translate-y-1 hover:scale-125 motion-reduce:transform-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-none",
                 active === r.type && "bg-primary-fixed",
@@ -162,7 +160,7 @@ export function ReactionBar({
           ))}
         </div>
 
-        {/* Trigger */}
+        {/* Trigger button */}
         <button
           type="button"
           onClick={onTriggerClick}
@@ -178,11 +176,13 @@ export function ReactionBar({
           )}
         >
           {activeConfig ? (
+            // Show selected reaction emoji + translated label
             <>
-              <span className="text-base leading-none">{activeConfig.emoji}</span>
+              <span className="text-base leading-none">{activeEmoji}</span>
               <span className={activeConfig.color}>{t(activeConfig.labelKey)}</span>
             </>
           ) : (
+            // Default state: no reaction selected
             <>
               <Icon name="thumb_up" size={18} className="text-on-surface-variant" />
               <span className="text-on-surface-variant">{t("react")}</span>

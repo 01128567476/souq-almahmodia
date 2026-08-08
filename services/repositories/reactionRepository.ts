@@ -10,7 +10,7 @@
 import type { ReactionRow, ReactionType, ReactionSummary } from "@/types";
 import { db } from "@/lib/db-server";
 import { reactions } from "@/drizzle/schema";
-import { eq, and, asc, count, desc, sql } from "drizzle-orm";
+import { eq, and, asc, count, desc } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 
 /* -------------------------------------------------------------------------- */
@@ -72,18 +72,29 @@ export const reactionRepository = {
 
   /**
    * Remove a user's reaction from an ad.
+   * Returns the number of affected rows (0 = nothing was removed).
    */
-  async remove(adId: string, userId: string): Promise<void> {
-    await db
+  async remove(adId: string, userId: string): Promise<number> {
+    const result = await db
       .delete(reactions)
       .where(
         and(
           eq(reactions.adId, adId),
           eq(reactions.userId, userId),
         ),
-      );
+      )
+      .returning({ affectedUserId: reactions.userId });
 
-    return;
+    const affected = result.length;
+    console.log(
+      `[reactionRepository.remove] adId=${adId} userId=${userId} affected=${affected}`,
+    );
+    if (affected === 0) {
+      console.warn(
+        `[reactionRepository.remove] WARNING: 0 rows affected. Reaction may not exist.`,
+      );
+    }
+    return affected;
   },
 
   /**
@@ -161,13 +172,23 @@ export const reactionRepository = {
   /**
    * Get the aggregate summary for an ad (counts per type + viewer reaction).
    * Returns safe default when no reactions exist or viewerId is null.
+   *
+   * IMPORTANT: This must be called within the same transaction as remove/upsert
+   * to avoid read-after-write inconsistency from connection pooling.
    */
   async getSummary(
     adId: string,
     viewerId: string | null,
   ): Promise<ReactionSummary> {
-    console.log("[reactionRepository.getSummary] Called with adId:", adId, "viewerId:", viewerId);
-    
+    console.log(
+      "[reactionRepository.getSummary] Called with adId:",
+      adId,
+      "viewerId:",
+      viewerId,
+    );
+
+    // Single query: get ALL reactions for this ad, then compute viewerReaction
+    // in JavaScript — avoids a second query that could return stale data.
     const rows = await db
       .select()
       .from(reactions)
@@ -183,33 +204,24 @@ export const reactionRepository = {
       sad: 0,
     };
 
+    let viewerReaction: ReactionType | null = null;
+
     for (const row of rows) {
       if (isValidReactionType(row.type)) {
         counts[row.type] = (counts[row.type] ?? 0) + 1;
+      }
+      // Check if this row belongs to the viewer
+      if (viewerId && row.userId === viewerId) {
+        viewerReaction = row.type;
       }
     }
 
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
 
-    let viewerReaction: ReactionType | null = null;
-    if (viewerId) {
-      const viewerRows = await db
-        .select({ type: reactions.type })
-        .from(reactions)
-        .where(
-          and(
-            eq(reactions.adId, adId),
-            eq(reactions.userId, viewerId),
-          ),
-        )
-        .limit(1);
-
-      viewerReaction = isValidReactionType(viewerRows[0]?.type) 
-        ? viewerRows[0].type 
-        : null;
-    }
-
-    console.log("[reactionRepository.getSummary] Result:", { total, counts, viewerReaction });
+    console.log(
+      "[reactionRepository.getSummary] Result:",
+      JSON.stringify({ total, counts, viewerReaction }),
+    );
     return { total, counts, viewerReaction };
   },
 

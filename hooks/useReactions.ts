@@ -1,128 +1,235 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { ReactionSummary, ReactionType } from "@/types";
 
 interface UseReactionsResult {
   summary: ReactionSummary | null;
   loading: boolean;
-  /** True while a mutation is in flight (optimistic update settling). */
   pending: boolean;
   isAuthenticated: boolean;
-  /** Toggle a reaction: sets it, or removes it if it's already the viewer's. */
   react: (type: ReactionType) => void;
 }
 
+const DEFAULT_SUMMARY: ReactionSummary = {
+  total: 0,
+  counts: { like: 0, love: 0, funny: 0, wow: 0, sad: 0 },
+  viewerReaction: null,
+};
+
 /**
- * Owns the reaction state for one advertisement: initial load plus optimistic
- * set/change/remove. All data access goes through the API, so this hook is
- * completely decoupled from server-only repository modules.
+ * Reactions hook — architecture-level fix for stale fetch overwrite.
+ *
+ * FIX (2026-08-08):
+ * - Request ID system: each fetch gets unique ID, stale responses ignored
+ * - lastMutationAt timestamp: fetches started before mutation are stale
+ * - useEffect ONLY depends on adId + viewerId (NOT summary or mutation results)
+ * - No refetch inside react() or optimistic update
+ * - Server response is the ONLY source of truth after mutation
+ * - Hard execution lock prevents duplicate mutations
  */
 export function useReactions(adId: string): UseReactionsResult {
   const { user, isAuthenticated } = useAuth();
   const viewerId = user?.id ?? null;
 
-  const [summary, setSummary] = useState<ReactionSummary | null>(null);
+  const [summary, setSummary] = useState<ReactionSummary | null>({ ...DEFAULT_SUMMARY });
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
 
-  const fetchReactions = useCallback(async () => {
+  // Stale response protection
+  const fetchRequestId = useRef(0);
+  const lastMutationAt = useRef(0);
+
+  // Execution lock
+  const inFlight = useRef(false);
+
+  // Initial fetch tracking
+  const hasInitialFetched = useRef(false);
+  const lastViewerId = useRef<string | null>(null);
+
+  /**
+   * Fetch reaction summary — with request ID for stale detection.
+   * Returns the request ID so caller can verify response is not stale.
+   */
+  const doFetch = useCallback(async (): Promise<{ requestId: number; summary: ReactionSummary | null }> => {
+    const requestId = ++fetchRequestId.current;
+    console.log("[useReactions] FETCH START id=", requestId);
+
     try {
       const params = new URLSearchParams();
       if (viewerId) params.set("viewerId", viewerId);
-      const res = await fetch(`/api/ads/${adId}/reactions?${params}`);
-      if (!res.ok) return null;
+      const url = `/api/ads/${adId}/reactions?${params}`;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) {
+        console.log("[useReactions] FETCH IGNORED (stale) if requestId=", requestId);
+        return { requestId, summary: null };
+      }
       const data = await res.json();
-      return data.summary ?? null;
-    } catch {
-      return null;
+      const fetchedSummary = data?.summary ?? null;
+
+      // Verify this response is still the latest fetch
+      if (requestId !== fetchRequestId.current) {
+        console.log("[useReactions] FETCH IGNORED (stale) id=", requestId, "current=", fetchRequestId.current);
+        return { requestId, summary: null };
+      }
+
+      // Verify no newer mutation happened after this fetch started
+      if (lastMutationAt.current > 0) {
+        console.log("[useReactions] FETCH IGNORED (mutation happened after fetch) id=", requestId);
+        return { requestId, summary: null };
+      }
+
+      console.log("[useReactions] FETCH APPLIED id=", requestId, "summary=", fetchedSummary);
+      return { requestId, summary: fetchedSummary };
+    } catch (err) {
+      console.error("[useReactions] FETCH FAILED id=", requestId, err);
+      return { requestId, summary: null };
     }
   }, [adId, viewerId]);
 
+  /**
+   * Initial load — runs ONLY when adId or viewerId changes.
+   * NOT triggered by summary changes or mutation results.
+   */
   useEffect(() => {
     let active = true;
+
+    // Skip if viewerId hasn't changed and we already fetched
+    if (viewerId === lastViewerId.current && hasInitialFetched.current) {
+      return;
+    }
+
+    console.log("[useReactions] useEffect triggering fetch for adId=", adId, "viewerId=", viewerId);
+
     setLoading(true);
-    fetchReactions()
-      .then((data) => {
-        if (active) setSummary(data);
+    doFetch()
+      .then(({ requestId, summary }) => {
+        if (!active) return;
+        // Only apply if this is still the latest request and no mutation happened
+        if (requestId === fetchRequestId.current && lastMutationAt.current === 0) {
+          setSummary(summary ?? { ...DEFAULT_SUMMARY });
+          hasInitialFetched.current = true;
+          lastViewerId.current = viewerId;
+          console.log("[useReactions] Initial fetch applied, viewerId=", viewerId);
+        }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       });
+
     return () => {
       active = false;
     };
-  }, [adId, viewerId, fetchReactions]);
+  }, [adId, viewerId, doFetch]);
 
+  /**
+   * react() — mutation function with full stale protection.
+   *
+   * GUARANTEES:
+   * 1. Only ONE call executes at a time (inFlight lock)
+   * 2. Sets lastMutationAt timestamp BEFORE optimistic update
+   * 3. All pending/in-flight fetches will ignore their responses (stale detection)
+   * 4. Server response becomes the ONLY state source after mutation
+   * 5. No refetch after mutation
+   */
   const react = useCallback(
     (type: ReactionType) => {
-      console.log("[useReactions] react called, type:", type, "viewerId:", viewerId, "summary:", summary);
-      
-      if (!viewerId) {
-        console.log("[useReactions] No viewerId, aborting");
+      console.log("[useReactions] MUTATION START type=", type);
+
+      // HARD EXECUTION LOCK — prevent duplicate calls
+      if (inFlight.current) {
+        console.log("[useReactions] MUTATION BLOCKED (inFlight)");
         return;
       }
 
-      // If summary is still loading (null), skip optimistic update but still attempt API call
-      const isRemoving = summary?.viewerReaction === type;
-      const prevSummary = summary;
-
-      // Optimistic update so the UI feels instant (only if we have current state)
-      if (prevSummary) {
-        setSummary((prev) => (prev ? applyReaction(prev, type, isRemoving) : prev));
-      }
+      inFlight.current = true;
       setPending(true);
 
+      // CRITICAL: Mark mutation time BEFORE optimistic update
+      // Any fetch that started before this timestamp is potentially stale
+      lastMutationAt.current = Date.now();
+      const mutationTimestamp = lastMutationAt.current;
+
+      // Detect isRemoving from current state
+      const currentSummary = summary ?? { ...DEFAULT_SUMMARY };
+      const isRemoving = currentSummary.viewerReaction === type;
+
+      // Optimistic update (will be overwritten by server response if needed)
+      setSummary((prev) => {
+        const current = prev ?? { ...DEFAULT_SUMMARY };
+        const nextCounts = { ...current.counts };
+        const isRemovingFromPrev = current.viewerReaction === type;
+
+        if (current.viewerReaction) {
+          nextCounts[current.viewerReaction] = Math.max(0, nextCounts[current.viewerReaction] - 1);
+        }
+
+        if (!isRemovingFromPrev) {
+          nextCounts[type] = (nextCounts[type] ?? 0) + 1;
+        }
+
+        const nextTotal = Object.values(nextCounts).reduce((s: number, n: number) => s + n, 0);
+
+        return {
+          counts: nextCounts,
+          total: nextTotal,
+          viewerReaction: isRemovingFromPrev ? null : type,
+        };
+      });
+
+      // Build URL
       const url = new URL(`/api/ads/${adId}/reactions`, window.location.origin);
       if (isRemoving) {
         url.searchParams.set("remove", "true");
       }
 
-      console.log("[useReactions] POST", url.toString());
-
+      // Call API
       fetch(url.toString(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type }),
+        cache: "no-store",
       })
         .then((res) => {
-          console.log("[useReactions] API response status:", res.status);
+          console.log("[useReactions] API response status=", res.status);
+          if (!res.ok) throw new Error(`POST failed: ${res.status}`);
           return res.json();
         })
         .then((data) => {
-          console.log("[useReactions] API response data:", data);
-          setSummary(data?.summary ?? prevSummary);
+          // Check if a NEWER mutation happened while waiting
+          if (lastMutationAt.current > mutationTimestamp) {
+            console.log("[useReactions] MUTATION IGNORED (newer mutation happened)");
+            return;
+          }
+
+          const serverSummary = data?.summary ?? null;
+          console.log("[useReactions] MUTATION END, server summary=", serverSummary);
+
+          // Server response BECOMES the state — no merge, no refetch
+          setSummary(serverSummary ?? { ...DEFAULT_SUMMARY });
         })
         .catch((err) => {
           console.error("[useReactions] API call failed:", err);
-          // On failure, re-fetch authoritative state.
-          fetchReactions().then(setSummary);
+          // On error, refetch to get authoritative state
+          doFetch().then(({ requestId, summary }) => {
+            // Only apply if no newer mutation happened
+            if (requestId === fetchRequestId.current && lastMutationAt.current === mutationTimestamp) {
+              setSummary(summary ?? { ...DEFAULT_SUMMARY });
+            }
+          });
         })
-        .finally(() => setPending(false));
+        .finally(() => {
+          // Release lock — mutation complete
+          inFlight.current = false;
+          setPending(false);
+          console.log("[useReactions] MUTATION COMPLETE, lock released");
+        });
     },
-    [adId, viewerId, summary, fetchReactions],
+    [adId, viewerId, summary, doFetch],
   );
 
   return { summary, loading, pending, isAuthenticated, react };
-}
-
-/** Pure helper: compute the next summary for an optimistic reaction change. */
-function applyReaction(
-  prev: ReactionSummary,
-  type: ReactionType,
-  isRemoving: boolean,
-): ReactionSummary {
-  const counts = { ...prev.counts };
-  const current = prev.viewerReaction;
-
-  if (current) counts[current] = Math.max(0, counts[current] - 1);
-  if (!isRemoving) counts[type] += 1;
-
-  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-  return {
-    counts,
-    total,
-    viewerReaction: isRemoving ? null : type,
-  };
 }

@@ -10,7 +10,7 @@
 import type { AdReport } from "@/types";
 import { db } from "@/lib/db-server";
 import { reports, products } from "@/drizzle/schema";
-import { eq, and, count, sql } from "drizzle-orm";
+import { eq, and, count, sql, inArray } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 import { desc } from "drizzle-orm";
 
@@ -137,7 +137,7 @@ export const reportRepository = {
       .select()
       .from(reports)
       .where(
-        sql`${reports.adId} IN (${adIds.map(() => sql`?`).join(", ")})`
+        inArray(reports.adId, adIds)
       )
       .orderBy(desc(reports.createdAt));
 

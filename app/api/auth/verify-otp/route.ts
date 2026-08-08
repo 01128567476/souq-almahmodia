@@ -22,6 +22,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db-server";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
 import { userRepository } from "@/services/repositories/userRepository";
 import { verifyOtpCode, consumeOtpToken } from "@/services/repositories/otpRepository";
 
@@ -42,22 +45,34 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    const p = purpose ?? "login";
+    const p = purpose ?? "verify";
 
     // Find user
-    const user = await userRepository.getByEmail(normalizedEmail);
-    if (!user) {
+    const userRow = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, normalizedEmail))
+      .limit(1);
+
+    if (userRow.length === 0) {
       return NextResponse.json(
         { success: false, message: "Invalid OTP code" },
         { status: 400 }
       );
     }
 
-    // Verify the code only (checks expiration, rate limit, hash match)
-    // NOTE: We DO NOT consume the OTP here. The OTP is consumed only when
-    // the password is actually reset in /api/auth/reset-password.
-    // This prevents the "double consume" bug where verify-otp consumes the
-    // OTP and then reset-password fails because it's already used.
+    const user = userRow[0];
+
+    // If email is already verified, return success
+    if (user.emailVerified) {
+      return NextResponse.json({
+        success: true,
+        message: "Email already verified",
+        userId: user.id,
+      });
+    }
+
+    // Verify the OTP code
     const verifyResult = await verifyOtpCode(user.id, code, "email");
     if (!verifyResult.success) {
       return NextResponse.json(
@@ -66,10 +81,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Mark email as verified
+    await db
+      .update(users)
+      .set({ emailVerified: new Date().toISOString(), updatedAt: new Date() })
+      .where(eq(users.id, user.id));
+
+    console.log(`[VERIFY-OTP] Email verified for user ${user.id} (${user.email})`);
+
     return NextResponse.json({
       success: true,
-      message: "OTP verified successfully",
+      message: p === "verify"
+        ? "Email verified successfully. You can now sign in."
+        : "OTP verified successfully",
       userId: user.id,
+      emailVerified: true,
     });
   } catch (error) {
     console.error("[VERIFY_OTP_ERROR]", error);

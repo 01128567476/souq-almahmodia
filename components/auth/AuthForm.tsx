@@ -129,7 +129,7 @@ export function AuthForm({
 }) {
   const locale = localeProp ?? "ar";
   const t = useTranslations("auth");
-  const { login } = useAuth();
+  const { login, register: registerUser } = useAuth();
   const router = useRouter();
   const [mode, setMode] = useState<Mode>(initialMode);
   const [showPassword, setShowPassword] = useState(false);
@@ -186,33 +186,50 @@ export function AuthForm({
     }
 
     try {
-      // Step 1: Call login API — sets session cookie server-side
-      await login(email, password);
+      if (mode === "signup") {
+        // Step 1: Register the user with full registration data
+        const fullName = formData.get("name")?.toString() || "";
+        const phone = formData.get("phone")?.toString() || "";
 
-      // Step 2: Fetch fresh session to get the actual role (avoid race condition)
-      // The session cookie was just set, so this will return the authenticated user
-      const sessionResponse = await fetch("/api/auth/session", {
-        credentials: "include",
-      });
+        await registerUser({
+          fullName,
+          email,
+          phone: phone || undefined,
+          password,
+        });
 
-      if (!sessionResponse.ok) {
-        throw new Error("Failed to fetch session after login");
-      }
-
-      const sessionData = await sessionResponse.json();
-      const sessionUser = sessionData?.data?.user;
-
-      if (!sessionUser?.role) {
-        throw new Error("Role missing in session after login");
-      }
-
-      // Step 3: Redirect based on ACTUAL role from server
-      setRedirecting(true);
-
-      if (sessionUser.role === "admin") {
-        window.location.href = `/${locale}/dashboard`;
+        // Step 2: Redirect to OTP verification page
+        // After successful registration, user must verify their email via OTP
+        setRedirecting(true);
+        window.location.href = `/${locale}/verify-code`;
       } else {
-        window.location.href = `/${locale}/account`;
+        // Sign in flow
+        await login(email, password);
+
+        // Step 2: Fetch fresh session to get the actual role (avoid race condition)
+        const sessionResponse = await fetch("/api/auth/session", {
+          credentials: "include",
+        });
+
+        if (!sessionResponse.ok) {
+          throw new Error("Failed to fetch session after login");
+        }
+
+        const sessionData = await sessionResponse.json();
+        const sessionUser = sessionData?.data?.user;
+
+        if (!sessionUser?.role) {
+          throw new Error("Role missing in session after login");
+        }
+
+        // Step 3: Redirect based on ACTUAL role from server
+        setRedirecting(true);
+
+        if (sessionUser.role === "admin") {
+          window.location.href = `/${locale}/dashboard`;
+        } else {
+          window.location.href = `/${locale}/account`;
+        }
       }
     } catch (err: any) {
       // Check if user needs email verification (status 403)
@@ -224,7 +241,7 @@ export function AuthForm({
           form: responseData.message || "Your email address has not been verified. Please check your inbox." 
         });
       } else {
-        const errorMessage = err?.message || t("loginError") || "Login failed. Please try again.";
+        const errorMessage = err?.message || t(mode === "signup" ? "registerError" : "loginError") || (mode === "signup" ? "Registration failed. Please try again." : "Login failed. Please try again.");
         setErrors({ form: errorMessage });
       }
       setLoading(false);
@@ -343,6 +360,20 @@ export function AuthForm({
     </svg>
   );
 
+  // At icon (for username)
+  const atIcon = (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 11-8 0 4 4 0 018 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+    </svg>
+  );
+
+  // Phone icon
+  const phoneIcon = (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+    </svg>
+  );
+
   return (
     <div className="w-full max-w-[420px] mx-auto">
       {/* Logo */}
@@ -395,15 +426,25 @@ export function AuthForm({
       {/* Form */}
       <form onSubmit={onSubmit} className="space-y-5">
         {mode === "signup" && (
-          <InputField
-            id="name"
-            label={t("fullName")}
-            icon={personIcon}
-            type="text"
-            placeholder="Nour Ali"
-            required
-            error={errors.name}
-          />
+          <>
+            <InputField
+              id="name"
+              label={t("fullName")}
+              icon={personIcon}
+              type="text"
+              placeholder="Nour Ali"
+              required
+              error={errors.name}
+            />
+            <InputField
+              id="phone"
+              label={t("phone")}
+              icon={phoneIcon}
+              type="tel"
+              placeholder="+20 123 456 7890"
+              error={errors.phone}
+            />
+          </>
         )}
         
         <InputField

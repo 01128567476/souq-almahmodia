@@ -139,8 +139,13 @@ const nextAuthConfig = {
         //
 
         // Verify password hash
-        const bcrypt = await import("bcryptjs");
-        const valid = await bcrypt.compare(password, user.passwordHash!);
+        const bcryptLib = await import("bcryptjs");
+        const storedHash = user.passwordHash;
+        console.log(`[AUTH] storedHash exists = ${!!storedHash}`);
+        console.log(`[AUTH] storedHash length = ${storedHash?.length}`);
+        console.log(`[AUTH] storedHash prefix = ${storedHash?.substring(0, 10)}`);
+        console.log(`[AUTH] input password length = ${password.length}`);
+        const valid = await bcryptLib.compare(password, storedHash!);
         console.log(`[AUTH] bcrypt.compare result = ${valid}`);
         if (!valid) {
           console.log("[AUTH] Password mismatch → returning null");

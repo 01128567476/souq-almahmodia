@@ -70,11 +70,13 @@ export const userRepository = {
   /**
    * List all users (admin directory).
    * Returns DirectoryUser view models with computed adsCount.
+   * Only returns users with verified emails.
    */
   async list(): Promise<DirectoryUser[]> {
     const rows = await db
       .select()
       .from(users)
+      .where(sql`${users}.email_verified IS NOT NULL`)
       .orderBy(users.createdAt);
 
     const result: DirectoryUser[] = [];

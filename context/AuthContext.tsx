@@ -45,7 +45,7 @@ interface AuthContextValue {
 /** Registration input data. */
 export interface RegisterData {
   fullName: string;
-  username: string;
+  username?: string;
   email: string;
   phone?: string;
   password: string;

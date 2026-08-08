@@ -37,9 +37,9 @@ function validateEmail(email: string): string | null {
   return null;
 }
 
-/** Validate username */
+/** Validate username (optional during registration, required later in username-setup) */
 function validateUsername(username: string): string | null {
-  if (!username?.trim()) return "Username is required";
+  if (!username?.trim()) return null; // Username is optional during registration
   if (username.length < 3) return "Username must be at least 3 characters";
   if (username.length > 50) return "Username must be at most 50 characters";
   if (!/^[a-zA-Z0-9_-]+$/.test(username)) return "Username can only contain letters, numbers, underscores, and hyphens";
@@ -131,6 +131,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Always generate a username (temporary if not provided)
+    const usernameValue = username.trim() || `user_${Date.now()}`;
+    const usernameLower = usernameValue.trim().toLowerCase();
+
     const emailError = validateEmail(email);
     if (emailError) {
       return NextResponse.json(
@@ -148,7 +152,6 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const usernameLower = username.trim().toLowerCase();
 
     // Step 1: Check if email already exists
     const existingByEmail = await db
@@ -182,74 +185,77 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 2: Check if username already exists
-    const existingByUsername = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.usernameLower, usernameLower))
-      .limit(1);
+    // Step 2: Check if username already exists (only if provided)
+    if (usernameValue) {
+      const existingByUsername = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.usernameLower, usernameLower))
+        .limit(1);
 
-    if (existingByUsername.length > 0) {
-      return NextResponse.json(
-        { success: false, message: "Username already taken" },
-        { status: 409 }
-      );
+      if (existingByUsername.length > 0) {
+        return NextResponse.json(
+          { success: false, message: "Username already taken" },
+          { status: 409 }
+        );
+      }
     }
 
-    // Step 3: Hash password, create user, generate OTP (all in transaction)
+    // Step 3: Hash password and create user
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const result = await db.transaction(async (tx) => {
-      const now = new Date();
-      const [user] = await tx
-        .insert(users)
-        .values({
-          displayName: fullName.trim(),
-          username: usernameLower,
-          usernameLower: usernameLower,
-          email: normalizedEmail,
-          phone: phone.trim() || null,
-          passwordHash: passwordHash,
-          hasPassword: true,
-          emailVerified: null, // Must verify before login
-          role: "user" as const,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
+    const user = await db
+      .insert(users)
+      .values({
+        displayName: fullName.trim(),
+        username: usernameValue,
+        usernameLower: usernameLower,
+        email: normalizedEmail,
+        phone: phone.trim() || null,
+        passwordHash: passwordHash,
+        hasPassword: true,
+        emailVerified: null, // Must verify before login
+        role: "user" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
 
-      if (!user) {
-        throw new Error("Failed to create user");
-      }
-
-      // Generate OTP for email verification
-      const otpResult = await createOtpToken(user.id, normalizedEmail, "email");
-      if (!otpResult.success || !otpResult.code) {
-        throw new Error("Failed to generate OTP code");
-      }
-
-      return { user, otpCode: otpResult.code };
-    });
-
-    if (!result || !result.user) {
+    if (!user || !user[0]) {
       return NextResponse.json(
         { success: false, message: "Failed to create user" },
         { status: 500 }
       );
     }
 
-    // Send OTP via email
+    const createdUser = user[0];
+
+    // Step 4: Generate OTP for email verification (AFTER user is committed)
+    // CRITICAL FIX: OTP generation must happen OUTSIDE the user insert transaction
+    // because otpTokens.userId has a FK constraint referencing users.id.
+    // Creating OTP inside the same transaction with a different db connection
+    // causes PostgreSQL foreign key violation (user row not yet visible).
+    const otpResult = await createOtpToken(createdUser.id, normalizedEmail, "email");
+    if (!otpResult.success || !otpResult.code) {
+      console.error("[REGISTER] OTP generation failed for user:", createdUser.id);
+      // User is created but OTP failed — return success so user can request resend
+      // The user can complete verification later via OTP verify endpoint
+    }
+
+    // Send OTP via email (non-blocking — registration succeeds even if email fails)
     try {
-      const emailService = getEmailService();
-      await emailService.sendOtpEmail(
-        result.user.email,
-        result.otpCode,
-        "verify",
-        "en"
-      );
+      if (otpResult.code) {
+        const emailService = getEmailService();
+        await emailService.sendOtpEmail(
+          createdUser.email,
+          otpResult.code,
+          "verify",
+          "en"
+        );
+      }
     } catch (emailError) {
-      console.error("[REGISTER] OTP email send failed:", emailError);
-      // Continue even if email fails — user can request resend
+      // Log but DO NOT block registration
+      console.error("[REGISTER] OTP email send failed (non-fatal):", emailError);
     }
 
     return NextResponse.json(

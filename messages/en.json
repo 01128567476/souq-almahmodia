@@ -528,13 +528,17 @@
     "love": "Love",
     "funny": "Haha",
     "wow": "Wow",
-    "sad": "Sad"
+    "sad": "Sad",
+    "loginRequired": "Sign in to react",
+    "loginToReact": "Sign in to react"
   },
   "engagement": {
     "views": "Views",
     "reactions": "Reactions",
     "comments": "Comments",
     "favorites": "Favorites",
+    "addFavorite": "Add to Favorites",
+    "removeFavorite": "Remove from Favorites",
     "reactionsCount": "{count} reactions",
     "commentsCount": "{count} comments",
     "commentPlaceholder": "Write a comment...",

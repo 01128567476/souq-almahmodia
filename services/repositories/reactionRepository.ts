@@ -14,6 +14,15 @@ import { eq, and, asc, count, desc, sql } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 
 /* -------------------------------------------------------------------------- */
+/* Reaction Type helper                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Validate that a string is a known reaction type. */
+function isValidReactionType(value: unknown): value is ReactionType {
+  return typeof value === "string" && ["like", "love", "funny", "wow", "sad"].includes(value);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Input types                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -32,21 +41,33 @@ export const reactionRepository = {
   /**
    * Upsert a reaction — production-safe.
    *
-   * Uses ON CONFLICT (ad_id, user_id) DO UPDATE for atomic upsert.
+   * Uses Drizzle's onConflictDoUpdate for atomic upsert.
    * The database-level unique constraint (unique_reaction) prevents race conditions.
    *
    * If the user already has a reaction on this ad, the type is updated.
    * Otherwise, a new reaction is created.
    */
   async upsert(input: ReactionUpsertInput): Promise<void> {
-    await db.execute(sql`
-      INSERT INTO reactions (ad_id, user_id, type, created_at)
-      VALUES (${input.adId}, ${input.userId}, ${input.type}, NOW())
-      ON CONFLICT (ad_id, user_id)
-      DO UPDATE SET type = ${input.type}
-    `);
+    console.log("[reactionRepository.upsert] Called with:", { adId: input.adId, userId: input.userId, type: input.type });
+    
+    try {
+      await db
+        .insert(reactions)
+        .values({
+          adId: input.adId,
+          userId: input.userId,
+          type: input.type,
+        })
+        .onConflictDoUpdate({
+          target: [reactions.adId, reactions.userId],
+          set: { type: input.type },
+        });
 
-    return;
+      console.log("[reactionRepository.upsert] Success");
+    } catch (error) {
+      console.error("[reactionRepository.upsert] Failed:", error);
+      throw error;
+    }
   },
 
   /**
@@ -139,15 +160,20 @@ export const reactionRepository = {
 
   /**
    * Get the aggregate summary for an ad (counts per type + viewer reaction).
+   * Returns safe default when no reactions exist or viewerId is null.
    */
   async getSummary(
     adId: string,
     viewerId: string | null,
   ): Promise<ReactionSummary> {
+    console.log("[reactionRepository.getSummary] Called with adId:", adId, "viewerId:", viewerId);
+    
     const rows = await db
       .select()
       .from(reactions)
       .where(eq(reactions.adId, adId));
+
+    console.log("[reactionRepository.getSummary] Fetched rows:", rows.length);
 
     const counts: Record<ReactionType, number> = {
       like: 0,
@@ -158,10 +184,12 @@ export const reactionRepository = {
     };
 
     for (const row of rows) {
-      counts[row.type] = (counts[row.type] ?? 0) + 1;
+      if (isValidReactionType(row.type)) {
+        counts[row.type] = (counts[row.type] ?? 0) + 1;
+      }
     }
 
-    const total = rows.length;
+    const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
 
     let viewerReaction: ReactionType | null = null;
     if (viewerId) {
@@ -176,9 +204,12 @@ export const reactionRepository = {
         )
         .limit(1);
 
-      viewerReaction = viewerRows[0]?.type ?? null;
+      viewerReaction = isValidReactionType(viewerRows[0]?.type) 
+        ? viewerRows[0].type 
+        : null;
     }
 
+    console.log("[reactionRepository.getSummary] Result:", { total, counts, viewerReaction });
     return { total, counts, viewerReaction };
   },
 

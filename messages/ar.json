@@ -528,13 +528,18 @@
     "love": "أحببته",
     "funny": "هاها",
     "wow": "رائع",
-    "sad": "حزين"
+    "sad": "حزين",
+    "loginRequired": "يجب تسجيل الدخول للتفاعل",
+    "loginToReact": "سجّل الدخول للتفاعل"
   },
   "engagement": {
+    "loginRequired": "يجب تسجيل الدخول",
     "views": "المشاهدات",
     "reactions": "التفاعلات",
     "comments": "التعليقات",
     "favorites": "المفضلة",
+    "addFavorite": "أضف للمفضلة",
+    "removeFavorite": "إزالة من المفضلة",
     "reactionsCount": "{count} تفاعل",
     "commentsCount": "{count} تعليق",
     "commentPlaceholder": "اكتب تعليقاً...",

@@ -78,23 +78,37 @@ export function ReactionBar({
   };
 
   const requireAuth = (): boolean => {
+    console.log("[ReactionBar] requireAuth() called, isAuthenticated:", isAuthenticated);
     if (isAuthenticated) return true;
+    // Show visual feedback before redirect
+    alert(t("loginRequired"));
     router.push(`${ROUTES.login}?next=${encodeURIComponent(`/product/${adId}`)}`);
     return false;
   };
 
   const pick = (type: ReactionType) => {
+    console.log("[ReactionBar] pick() called, type:", type, "isAuthenticated:", isAuthenticated);
     setOpen(false);
-    if (!requireAuth()) return;
+    if (!requireAuth()) {
+      console.log("[ReactionBar] requireAuth failed, aborting pick");
+      return;
+    }
+    console.log("[ReactionBar] Calling onReact with type:", type);
     onReact(type); // toggles: re-selecting the active reaction removes it.
   };
 
   // Clicking the trigger: on a reacted item toggles it off; otherwise opens picker.
   const onTriggerClick = () => {
-    if (!requireAuth()) return;
+    console.log("[ReactionBar] onTriggerClick() called, summary:", summary);
+    if (!requireAuth()) {
+      console.log("[ReactionBar] requireAuth failed in trigger, aborting");
+      return;
+    }
     if (summary?.viewerReaction) {
+      console.log("[ReactionBar] User has existing reaction:", summary.viewerReaction, "toggling it off");
       onReact(summary.viewerReaction);
     } else {
+      console.log("[ReactionBar] No existing reaction, opening picker");
       setOpen((v) => !v);
     }
   };
@@ -106,9 +120,12 @@ export function ReactionBar({
     <div className="flex flex-wrap items-center gap-md">
       <div
         ref={containerRef}
-        className="relative"
-        onMouseEnter={openNow}
-        onMouseLeave={closeSoon}
+        className={cn(
+          "relative",
+          !isAuthenticated && "cursor-not-allowed opacity-70",
+        )}
+        onMouseEnter={isAuthenticated ? openNow : undefined}
+        onMouseLeave={isAuthenticated ? closeSoon : undefined}
       >
         {/* Picker popover */}
         <div
@@ -128,10 +145,14 @@ export function ReactionBar({
               role="menuitemradio"
               aria-checked={active === r.type}
               aria-label={t(r.labelKey)}
-              title={t(r.labelKey)}
-              onClick={() => pick(r.type)}
+              title={!isAuthenticated ? t("loginRequired") : t(r.labelKey)}
+              onClick={(e) => {
+                console.log("[ReactionBar] Emoji button clicked, type:", r.type, "disabled:", !isAuthenticated, "open:", open);
+                pick(r.type);
+              }}
+              disabled={!isAuthenticated}
               className={cn(
-                "grid h-10 w-10 place-items-center rounded-full text-2xl transition-transform duration-150 hover:-translate-y-1 hover:scale-125 motion-reduce:transform-none",
+                "grid h-10 w-10 place-items-center rounded-full text-2xl transition-transform duration-150 hover:-translate-y-1 hover:scale-125 motion-reduce:transform-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-none",
                 active === r.type && "bg-primary-fixed",
               )}
               style={{ transitionDelay: open ? `${i * 25}ms` : "0ms" }}
@@ -147,12 +168,13 @@ export function ReactionBar({
           onClick={onTriggerClick}
           aria-haspopup="menu"
           aria-expanded={open}
-          disabled={pending}
+          disabled={pending || !isAuthenticated}
+          title={!isAuthenticated ? t("loginRequired") : undefined}
           className={cn(
-            "flex items-center gap-xs rounded-full border px-md py-sm font-label-md text-label-md transition-colors disabled:opacity-60",
+            "flex items-center gap-xs rounded-full border px-md py-sm font-label-md text-label-md transition-all disabled:cursor-not-allowed disabled:opacity-60",
             activeConfig
               ? "border-primary/40 bg-primary-fixed"
-              : "border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low",
+              : "border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low active:scale-95",
           )}
         >
           {activeConfig ? (
@@ -169,6 +191,12 @@ export function ReactionBar({
         </button>
       </div>
 
+      {/* Unauthenticated hint */}
+      {!isAuthenticated && (
+        <p className="text-body-sm text-on-surface-variant italic">
+          {t("loginToReact")}
+        </p>
+      )}
     </div>
   );
 }

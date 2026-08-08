@@ -57,28 +57,50 @@ export function useReactions(adId: string): UseReactionsResult {
 
   const react = useCallback(
     (type: ReactionType) => {
-      if (!viewerId || !summary) return;
-
-      const isRemoving = summary.viewerReaction === type;
-
-      // Optimistic update so the UI feels instant.
-      setSummary((prev) => (prev ? applyReaction(prev, type, isRemoving) : prev));
-      setPending(true);
-
-      const params = new URLSearchParams({ type });
-      if (isRemoving) {
-        params.set("remove", "true");
+      console.log("[useReactions] react called, type:", type, "viewerId:", viewerId, "summary:", summary);
+      
+      if (!viewerId) {
+        console.log("[useReactions] No viewerId, aborting");
+        return;
       }
 
-      fetch(`/api/ads/${adId}/reactions?${params}`, { method: "POST" })
-        .then((res) => res.json())
-        .then((data) => setSummary(data?.summary ?? summary))
-        .catch(() => {
+      // If summary is still loading (null), skip optimistic update but still attempt API call
+      const isRemoving = summary?.viewerReaction === type;
+      const prevSummary = summary;
+
+      // Optimistic update so the UI feels instant (only if we have current state)
+      if (prevSummary) {
+        setSummary((prev) => (prev ? applyReaction(prev, type, isRemoving) : prev));
+      }
+      setPending(true);
+
+      const url = new URL(`/api/ads/${adId}/reactions`, window.location.origin);
+      if (isRemoving) {
+        url.searchParams.set("remove", "true");
+      }
+
+      console.log("[useReactions] POST", url.toString());
+
+      fetch(url.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      })
+        .then((res) => {
+          console.log("[useReactions] API response status:", res.status);
+          return res.json();
+        })
+        .then((data) => {
+          console.log("[useReactions] API response data:", data);
+          setSummary(data?.summary ?? prevSummary);
+        })
+        .catch((err) => {
+          console.error("[useReactions] API call failed:", err);
           // On failure, re-fetch authoritative state.
           fetchReactions().then(setSummary);
         })
-       
-    .finally(() => setPending(false)); },
+        .finally(() => setPending(false));
+    },
     [adId, viewerId, summary, fetchReactions],
   );
 

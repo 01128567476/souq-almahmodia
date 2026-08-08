@@ -34,33 +34,51 @@ export function useFavorite(
   const [pending, setPending] = useState(false);
 
   const toggle = useCallback(() => {
+    console.log("[useFavorite] toggle() called, isAuthenticated:", isAuthenticated, "viewerId:", viewerId, "favorited:", favorited, "count:", count);
+    
     if (!isAuthenticated || !viewerId) {
+      console.log("[useFavorite] Not authenticated, redirecting to login");
       router.push(`${ROUTES.login}?next=${encodeURIComponent(`/product/${adId}`)}`);
       return;
     }
 
     const next = !favorited;
+    console.log("[useFavorite] Toggling from favorited:", favorited, "to:", next);
 
     // Optimistic: flip immediately so the heart feels instant.
+    const newCount = Math.max(0, count + (next ? 1 : -1));
+    console.log("[useFavorite] Optimistic update: favorited=", next, "count=", newCount);
     onChange({
       viewerHasFavorited: next,
-      favorites: Math.max(0, count + (next ? 1 : -1)),
+      favorites: newCount,
     });
     setPending(true);
 
     const method = next ? "POST" : "DELETE";
+    console.log("[useFavorite] Calling API:", method, "/api/ads/" + adId + "/favorites?userId=" + viewerId);
+    
     fetch(`/api/ads/${adId}/favorites?userId=${viewerId}`, { method })
-      .then((res) => res.json())
+      .then((res) => {
+        console.log("[useFavorite] API response status:", res.status);
+        return res.json();
+      })
       .then((data) => {
+        console.log("[useFavorite] API response data:", data);
         if (data?.stats) {
+          console.log("[useFavorite] Applying server stats: favorites=", data.stats.favorites, "viewerHasFavorited=", data.stats.viewerHasFavorited);
           onChange({ favorites: data.stats.favorites, viewerHasFavorited: data.stats.viewerHasFavorited });
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[useFavorite] API call failed:", err);
         // Revert on failure.
+        console.log("[useFavorite] Reverting to: favorited=", favorited, "count=", count);
         onChange({ viewerHasFavorited: favorited, favorites: count });
       })
-      .finally(() => setPending(false));
+      .finally(() => {
+        console.log("[useFavorite] finally, setting pending=false");
+        setPending(false);
+      });
   }, [adId, favorited, count, isAuthenticated, viewerId, router, onChange]);
 
   return { pending, toggle };

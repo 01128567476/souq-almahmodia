@@ -80,9 +80,10 @@ export async function POST(
     const summary = await reactionRepository.getSummary(id, currentUser.id);
 
     return NextResponse.json({ success: true, data: summary });
-  } catch {
+  } catch (error) {
+    console.error("[REACTION_API_ERROR]", error);
     return NextResponse.json(
-      { success: false, error: "Failed to set reaction" },
+      { success: false, error: "Failed to set reaction", details: error instanceof Error ? error.message : String(error) },
       { status: 500 },
     );
   }

@@ -87,15 +87,26 @@ export async function getBasicUser(userId: string): Promise<{
 }
 
 /**
+ * Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined.
+ */
+function toIsoString(val: Date | string | null | undefined): string | null {
+  if (val == null) return null;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
+/**
  * Map a DB user row to the User type.
+ * PostgreSQL may return dates as Date objects OR ISO strings depending on driver config.
  */
 function mapDbUserToProfile(row: {
   id: string;
   displayName: string;
   username: string;
   usernameLower: string;
-  usernameLastChangedAt: Date | null;
-  joinedAt: Date;
+  usernameLastChangedAt: Date | string | null;
+  joinedAt: Date | string;
   avatar: string | null;
   googleId: string | null;
   email: string;
@@ -107,10 +118,8 @@ function mapDbUserToProfile(row: {
     displayName: row.displayName,
     username: row.username,
     usernameLower: row.usernameLower,
-    usernameLastChangedAt: row.usernameLastChangedAt
-      ? row.usernameLastChangedAt.toISOString()
-      : null,
-    joinedAt: row.joinedAt.toISOString(),
+    usernameLastChangedAt: toIsoString(row.usernameLastChangedAt),
+    joinedAt: toIsoString(row.joinedAt) ?? new Date().toISOString(),
     avatar: row.avatar ?? "",
     email: row.email,
     role: row.role as User["role"],

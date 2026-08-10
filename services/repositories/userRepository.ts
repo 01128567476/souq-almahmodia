@@ -25,40 +25,56 @@ import { eq, count, sql, like, and, ilike, sql as sqlRaw } from "drizzle-orm";
 /* Helpers                                                                  */
 /* ======================================================================== */
 
-/**
- * Transform a Drizzle User row into the DirectoryUser view model.
- * Computes adsCount via a subquery and derives status from existence.
- */
-async function mapToDirectoryUser(
-  row: typeof users.$inferSelect,
-): Promise<DirectoryUser | null> {
-  if (!row) return null;
+  /**
+   * Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined.
+   */
+  function toIsoString(val: Date | string | null | undefined): string | null {
+    if (val == null) return null;
+    if (val instanceof Date) return val.toISOString();
+    if (typeof val === "string") return val;
+    return String(val);
+  }
 
-  // Count ads for this user
-  const [countResult] = await db
-    .select({ count: count() })
-    .from(products)
-    .where(eq(products.ownerId, row.id));
+  /**
+   * Convert a date-like value to YYYY-MM-DD date string.
+   */
+  function toDateString(val: Date | string | null | undefined): string {
+    if (val == null) return new Date().toISOString().split("T")[0];
+    if (val instanceof Date) return val.toISOString().split("T")[0];
+    if (typeof val === "string") return val.split("T")[0];
+    return String(val).split("T")[0];
+  }
 
-  // Format joinedAt as date string (YYYY-MM-DD)
-  const joinedDate = row.joinedAt
-    ? new Date(row.joinedAt).toISOString().split("T")[0]
-    : new Date().toISOString().split("T")[0];
+  /**
+   * Transform a Drizzle User row into the DirectoryUser view model.
+   * Computes adsCount via a subquery and derives status from existence.
+   * PostgreSQL may return dates as Date objects OR ISO strings.
+   */
+  async function mapToDirectoryUser(
+    row: typeof users.$inferSelect,
+  ): Promise<DirectoryUser | null> {
+    if (!row) return null;
 
-  return {
-    id: row.id,
-    name: row.displayName,
-    email: row.email,
-    phone: row.phone ?? undefined,
-    role: row.role as DirectoryUser["role"],
-    status: "active", // All users are active; suspension logic is handled via ad status
-    joinedDate,
-    adsCount: countResult.count ?? 0,
-    avatar: row.avatar ?? "",
-    username: row.username ?? undefined,
-    displayName: row.displayName ?? undefined,
-  };
-}
+    // Count ads for this user
+    const [countResult] = await db
+      .select({ count: count() })
+      .from(products)
+      .where(eq(products.ownerId, row.id));
+
+    return {
+      id: row.id,
+      name: row.displayName,
+      email: row.email,
+      phone: row.phone ?? undefined,
+      role: row.role as DirectoryUser["role"],
+      status: "active", // All users are active; suspension logic is handled via ad status
+      joinedDate: toDateString(row.joinedAt),
+      adsCount: countResult.count ?? 0,
+      avatar: row.avatar ?? "",
+      username: row.username ?? undefined,
+      displayName: row.displayName ?? undefined,
+    };
+  }
 
 /* ======================================================================== */
 /* Repository                                                               */

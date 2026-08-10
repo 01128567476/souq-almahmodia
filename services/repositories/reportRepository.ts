@@ -14,6 +14,14 @@ import { eq, and, count, sql, inArray } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 import { desc } from "drizzle-orm";
 
+/** Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined. Returns fallback for null. */
+function toIsoString(val: Date | string | null | undefined, fallback?: string): string {
+  if (val == null) return fallback ?? new Date().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Input types                                                                */
 /* -------------------------------------------------------------------------- */
@@ -89,7 +97,7 @@ export const reportRepository = {
         description: row.description ?? undefined,
         severity: row.severity,
         status: row.status,
-        createdAt: row.createdAt.toISOString(),
+        createdAt: toIsoString(row.createdAt),
       };
     } catch (err) {
       // Check if it's a unique constraint violation (PostgreSQL error code 23505)
@@ -121,7 +129,7 @@ export const reportRepository = {
       description: row.description ?? undefined,
       severity: row.severity,
       status: row.status,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -150,7 +158,7 @@ export const reportRepository = {
       description: row.description ?? undefined,
       severity: row.severity,
       status: row.status,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -185,7 +193,7 @@ export const reportRepository = {
       description: row.description ?? undefined,
       severity: row.severity,
       status: row.status,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -210,7 +218,7 @@ export const reportRepository = {
       description: row.description ?? undefined,
       severity: row.severity,
       status: row.status,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -234,7 +242,7 @@ export const reportRepository = {
       description: row.description ?? undefined,
       severity: row.severity,
       status: row.status,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);

@@ -18,6 +18,14 @@ import { moderationEvents, auditLogs } from "@/drizzle/schema";
 import { eq, asc, desc, sql } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 
+/** Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined. Returns fallback for null. */
+function toIsoString(val: Date | string | null | undefined, fallback?: string): string {
+  if (val == null) return fallback ?? new Date().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Input types                                                                */
 /* -------------------------------------------------------------------------- */
@@ -157,7 +165,7 @@ export const auditRepository = {
       actorId: row.actorId,
       actorName: row.actorName,
       note: row.note ?? undefined,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -183,7 +191,7 @@ export const auditRepository = {
       targetId: row.targetId,
       targetLabel: row.targetLabel ?? undefined,
       note: row.note ?? undefined,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);

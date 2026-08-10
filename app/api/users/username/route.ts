@@ -5,6 +5,7 @@ import { db } from "@/lib/db-server";
 import { users, usernameHistory } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import { userRepository } from "@/services/repositories/userRepository";
+import { normalizeDate } from "@/lib/dateUtils";
 
 /**
  * POST /api/users/username
@@ -62,8 +63,9 @@ export async function POST(request: NextRequest) {
 
     // Check cooldown (only if changing existing username)
     if (currentUser && currentUser.usernameLastChangedAt) {
-      const cooldown = getCooldownRemaining(currentUser.usernameLastChangedAt.toISOString());
-      if (!cooldown.canChange) {
+      const normalizedUsernameLastChangedAt = normalizeDate(currentUser.usernameLastChangedAt);
+      const cooldown = normalizedUsernameLastChangedAt ? getCooldownRemaining(normalizedUsernameLastChangedAt) : null;
+      if (cooldown && !cooldown.canChange) {
         return NextResponse.json(
           {
             error: "username.cooldown",

@@ -13,6 +13,14 @@ import { reactions } from "@/drizzle/schema";
 import { eq, and, asc, count, desc } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 
+/** Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined. Returns fallback for null. */
+function toIsoString(val: Date | string | null | undefined, fallback?: string): string {
+  if (val == null) return fallback ?? new Date().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Reaction Type helper                                                     */
 /* -------------------------------------------------------------------------- */
@@ -99,7 +107,7 @@ export const reactionRepository = {
       adId: row.adId,
       userId: row.userId,
       type: row.type,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -128,7 +136,7 @@ export const reactionRepository = {
       adId: row.adId,
       userId: row.userId,
       type: row.type,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     };
 
     return clone(result);
@@ -212,7 +220,7 @@ export const reactionRepository = {
       adId: row.adId,
       userId: row.userId,
       type: row.type,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);

@@ -1,125 +1,78 @@
 /**
- * Cloudinary upload with automatic retry and exponential backoff.
+ * Upload Retry with Exponential Backoff
  *
- * - MAX_RETRIES: 3 attempts total
- * - Exponential backoff: 500ms → 1000ms → 2000ms
- * - Progress callback for real-time feedback
- * - Network-error aware (won't retry on 4xx client errors)
+ * Automatically retries failed uploads with configurable attempts.
+ * Uses exponential backoff to handle transient errors.
+ *
+ * Features:
+ * - Configurable retry count (default: 1 → 2 total attempts)
+ * - Exponential backoff: 1s, 2s
+ * - Optional timeout protection (10s per attempt)
+ * - Last error propagated after all retries exhausted
  */
-
-// Cloudinary constants
-const CLOUDINARY_UPLOAD_URL = "https://api.cloudinary.com/v1_1";
-
-export type CloudinaryConfig = {
-  cloudName: string;
-  apiKey: string;
-  timestamp: string;
-  signature: string;
-};
-
-const MAX_RETRIES = 3;
-const INITIAL_DELAY_MS = 500;
 
 /**
- * Upload a single file to Cloudinary with retry logic.
- * @returns The secure URL of the uploaded image
+ * Execute a function with retry and exponential backoff.
+ *
+ * @param fn - Async function to retry
+ * @param retries - Number of retry attempts (default: 1)
+ * @param timeoutMs - Timeout per attempt in ms (default: 10000)
+ * @returns Result of the function
  */
-export async function uploadToCloudinaryWithRetry(
-  file: File,
-  config: CloudinaryConfig,
-  onProgress?: (progress: number) => void
-): Promise<string> {
+export async function retryUpload<T>(
+  fn: () => Promise<T>,
+  retries: number = 1,
+  timeoutMs: number = 10_000
+): Promise<T> {
   let lastError: unknown;
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const url = await uploadToCloudinary(file, config, onProgress);
-      return url;
+      // Wrap with timeout protection
+      return await withTimeout(fn(), timeoutMs);
     } catch (err) {
       lastError = err;
 
-      // Don't retry 4xx errors (bad file, invalid signature, etc.)
-      if (err instanceof Error && err.message.includes("400")) {
-        throw err;
-      }
-
-      if (attempt < MAX_RETRIES) {
-        // Exponential backoff
-        const delay = INITIAL_DELAY_MS * Math.pow(2, attempt - 1);
+      // Don't wait after the last attempt
+      if (attempt < retries - 1) {
+        const delayMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
         console.warn(
-          `[uploadRetry] Attempt ${attempt} failed for ${file.name}, retrying in ${delay}ms...`
+          `[retryUpload] Attempt ${attempt + 1}/${retries} failed, retrying in ${delayMs}ms`
         );
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await sleep(delayMs);
       }
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`Upload failed after ${MAX_RETRIES} attempts`);
+  // All retries exhausted — throw the last error
+  throw lastError;
 }
 
 /**
- * Perform the actual Cloudinary upload (single attempt).
+ * Wrap a promise with a timeout.
+ *
+ * @param promise - Promise to timeout
+ * @param ms - Timeout in milliseconds
+ * @returns Promise that rejects with timeout error if exceeded
  */
-async function uploadToCloudinary(
-  file: File,
-  config: CloudinaryConfig,
-  onProgress?: (progress: number) => void
-): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("api_key", config.apiKey);
-  formData.append("timestamp", config.timestamp);
-  formData.append("signature", config.signature);
-  formData.append("folder", "souq-ads");
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Operation timed out after ${ms}ms`)),
+        ms
+      )
+    ),
+  ]);
+}
 
-  // Use XMLHttpRequest for progress tracking
-  return new Promise<string>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-
-    xhr.upload.addEventListener("progress", (e) => {
-      if (e.lengthComputable && onProgress) {
-        const percent = Math.round((e.loaded / e.total) * 95); // reserve 5% for response
-        onProgress(percent);
-      }
-    });
-
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          if (data.secure_url) {
-            onProgress?.(100);
-            resolve(data.secure_url);
-          } else {
-            reject(new Error("No URL in Cloudinary response"));
-          }
-        } catch {
-          reject(new Error("Invalid Cloudinary response"));
-        }
-      } else {
-        let message = "Cloudinary upload failed";
-        try {
-          const errorData = JSON.parse(xhr.responseText);
-          message = errorData.error?.message || message;
-        } catch {
-          // Fall back
-        }
-        reject(new Error(message));
-      }
-    });
-
-    xhr.addEventListener("error", () => {
-      reject(new Error("Network error during upload"));
-    });
-
-    xhr.addEventListener("timeout", () => {
-      reject(new Error("Upload timeout"));
-    });
-
-    xhr.open("POST", `${CLOUDINARY_UPLOAD_URL}/${config.cloudName}/image/upload`);
-    xhr.timeout = 120_000; // 2 minutes max per file
-    xhr.send(formData);
-  });
+/**
+ * Sleep for a specified number of milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

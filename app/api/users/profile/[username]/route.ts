@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { userRepository } from "@/services/repositories/userRepository";
 import { adRepository } from "@/services/repositories/adRepository";
 import type { Product, SearchResultUser } from "@/types";
+import { safeDate } from "@/lib/dateUtils";
 
 /**
  * GET /api/users/profile/[username]
@@ -35,7 +36,7 @@ export async function GET(
       username: userRow.username ?? "",
       avatar: userRow.avatar ?? "",
       adsCount: activeAds.length,
-      joinedAt: userRow.joinedAt.toISOString(),
+      joinedAt: safeDate(userRow.joinedAt, { fallback: "now" })!,
       score: 0, // not used for profile
       ads: activeAds,
     };

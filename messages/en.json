@@ -250,6 +250,7 @@
     "approve": "Approve",
     "reject": "Reject",
     "loading": "Loading...",
+    "uploading": "Uploading images...",
     "publish": "Publish Ad",
     "saveChanges": "Save Changes",
     "published": "Your ad has been submitted for review.",

@@ -22,6 +22,12 @@ export default async function AccountLayout({
     redirect({ href: "/login", locale });
   }
 
+  // Admins are regular marketplace participants too — they keep their own ads,
+  // favourites and profile here. /dashboard is for moderation, not a substitute
+  // for /account. Redirecting admins away from /account broke every nav link
+  // that points here (post ad, favourites, notifications), since the dashboard
+  // has no equivalent page for them.
+
   const t = await getTranslations("account");
 
   return (

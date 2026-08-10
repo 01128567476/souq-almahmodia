@@ -14,6 +14,14 @@ import { clone } from "@/lib/db-utils";
 import { sql } from "drizzle-orm";
 import { desc } from "drizzle-orm";
 
+/** Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined. Returns fallback for null. */
+function toIsoString(val: Date | string | null | undefined, fallback?: string): string {
+  if (val == null) return fallback ?? new Date().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Helpers — flat list → threaded tree                                        */
 /* -------------------------------------------------------------------------- */
@@ -85,11 +93,11 @@ function mapRowToStoredComment(
     author: {
       id: row.authorId,
       name: row.authorName,
-
-         avatar: row.authorAvatar ?? "", },
+      avatar: row.authorAvatar ?? "",
+    },
     body: row.content,
-    createdAt: row.createdAt.toISOString(),
-    editedAt: row.editedAt?.toISOString() ?? null,
+    createdAt: toIsoString(row.createdAt),
+    editedAt: toIsoString(row.editedAt) ?? null,
     status: row.status,
   };
 }
@@ -153,7 +161,7 @@ export const commentRepository = {
         avatar: row.authorAvatar ?? "",
       },
       body: row.content,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
       edited: row.editedAt !== null,
       viewerIsAuthor: false,
       replies: [],
@@ -352,7 +360,7 @@ export const commentRepository = {
         avatar: row.authorAvatar ?? "",
       },
       body: row.content,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
       edited: row.editedAt !== null,
       viewerIsAuthor: true,
       replies: [],

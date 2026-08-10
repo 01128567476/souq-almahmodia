@@ -12,6 +12,14 @@ import { notifications } from "@/drizzle/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 
+/** Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined. Returns undefined for null. */
+function toIsoString(val: Date | string | null | undefined): string | undefined {
+  if (val == null) return undefined;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Input types                                                                */
 /* -------------------------------------------------------------------------- */
@@ -44,7 +52,7 @@ export const notificationRepository = {
       read: row.read,
       recipientId: row.recipientId,
       adId: row.adId ?? undefined,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);
@@ -121,7 +129,7 @@ export const notificationRepository = {
       read: false,
       recipientId: row[0].recipientId,
       adId: row[0].adId ?? undefined,
-      createdAt: row[0].createdAt.toISOString(),
+      createdAt: toIsoString(row[0].createdAt),
     };
 
     return clone(result);
@@ -157,7 +165,7 @@ export const notificationRepository = {
       read: row.read,
       recipientId: row.recipientId,
       adId: row.adId ?? undefined,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);

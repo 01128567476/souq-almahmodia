@@ -24,6 +24,8 @@ import {
   pgEnum,
 } from "drizzle-orm/pg-core";
 
+import { sql } from "drizzle-orm";
+
 import {
   adStatusEnum,
   roleEnum,
@@ -250,8 +252,16 @@ export const adImages = pgTable("ad_images", {
   /** Index: fetch all images for an ad. */
   idxAdImagesAdId: index("idx_ad_images_ad_id").on(t.adId),
 
-  /** Unique: only one primary image per ad. */
-  uniqueAdPrimary: uniqueIndex("unique_ad_primary_image").on(t.adId, t.isPrimary),
+  /**
+   * Unique: at most ONE primary image per ad.
+   *
+   * Must be a PARTIAL index (WHERE is_primary). A plain unique index on
+   * (ad_id, is_primary) also uniques the (ad_id, false) pair, which caps every
+   * ad at 2 images total — one primary, one non-primary.
+   */
+  uniqueAdPrimary: uniqueIndex("unique_ad_primary_image")
+    .on(t.adId)
+    .where(sql`${t.isPrimary}`),
 }));
 
 /* ======================================================================== */

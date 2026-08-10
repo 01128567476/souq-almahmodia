@@ -13,6 +13,14 @@ import { favorites } from "@/drizzle/schema";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { clone } from "@/lib/db-utils";
 
+/** Convert a date-like value to ISO string. Handles Date, ISO string, null/undefined. Returns fallback for null. */
+function toIsoString(val: Date | string | null | undefined, fallback?: string): string {
+  if (val == null) return fallback ?? new Date().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Input types                                                                */
 /* -------------------------------------------------------------------------- */
@@ -104,7 +112,7 @@ export const favoriteRepository = {
       id: row.id,
       userId: row.userId,
       adId: row.adId,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: toIsoString(row.createdAt),
     }));
 
     return clone(result);

@@ -7,6 +7,7 @@ import { Link, usePathname } from "@/i18n/routing";
 import { ROUTES } from "@/constants/routes";
 import { useAuth } from "@/context/AuthContext";
 import { Icon } from "@/components/ui/Icon";
+import type { Role } from "@/types";
 import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
 import { RoleSwitcher } from "@/components/layout/RoleSwitcher";
 import { LogoutButton } from "@/components/auth/LogoutButton";
@@ -21,24 +22,27 @@ interface DrawerLink {
 }
 
 /**
- * Full-screen mobile navigation drawer.
- *
- * Rendered through a portal to <body> so it escapes the sticky header's
- * `backdrop-filter` (glass-nav) — an element with backdrop-filter becomes the
- * containing block for `position: fixed` descendants, which would otherwise trap
- * the overlay inside the header and let page content show through.
- */
-export function MobileNav({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const t = useTranslations();
-  const { isAuthenticated } = useAuth();
-  const pathname = usePathname();
-  const [mounted, setMounted] = useState(false);
+   * Full-screen mobile navigation drawer.
+   *
+   * Rendered through a portal to <body> so it escapes the sticky header's
+   * `backdrop-filter` (glass-nav) — an element with backdrop-filter becomes the
+   * containing block for `position: fixed` descendants, which would otherwise trap
+   * the overlay inside the header and let page content show through.
+   */
+  export function MobileNav({
+    open,
+    onClose,
+  }: {
+    open: boolean;
+    onClose: () => void;
+  }) {
+    const t = useTranslations();
+    const { isAuthenticated, user } = useAuth();
+    const pathname = usePathname();
+    const [mounted, setMounted] = useState(false);
+
+    // Determine if user is admin
+    const isAdmin = user?.role === "admin";
 
   // Portals need a DOM target, which only exists after mount (avoids SSR mismatch).
   useEffect(() => setMounted(true), []);
@@ -76,6 +80,19 @@ export function MobileNav({
             icon: "favorite",
             exact: true,
           },
+          // Admins keep every user link and gain the dashboard entry. This list
+          // must stay in step with Navbar's — when the drawer showed /account
+          // links while the header badge read "admin", the two disagreed.
+          ...(isAdmin
+            ? [
+                {
+                  href: ROUTES.dashboard,
+                  label: t("dashboard.title"),
+                  icon: "shield",
+                  exact: true,
+                },
+              ]
+            : []),
         ]
       : []),
   ];

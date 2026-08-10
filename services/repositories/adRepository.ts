@@ -484,10 +484,12 @@ export const adRepository = {
   /* ---------------------------------------------------------------------- */
 
   async create(input: AdCreateInput, actor: Actor): Promise<Product> {
-    const now = new Date().toISOString();
+    const now = new Date();
 
     // Validate images: reject blob:, data:, base64 URLs
     const images = input.images ?? [];
+
+    // Validate: reject blob:, data:, base64 URLs
     const invalidImages = images.filter(
       (img) => img.startsWith("blob:") || img.startsWith("data:") || img.startsWith("base64")
     );
@@ -495,7 +497,19 @@ export const adRepository = {
       throw new Error("Invalid image URLs detected. Please re-upload your images.");
     }
 
-    const adValues = {
+    // Validate: at least one image required
+    if (!images || images.length === 0) {
+      throw new Error("No images provided");
+    }
+
+    // Drizzle's `timestamp()` columns default to mode: "date", so the driver
+    // mapper calls .toISOString() on whatever we pass. Pass Date objects —
+    // passing ISO strings throws "e.toISOString is not a function".
+    const createdAt = now;
+    const updatedAt = now;
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+
+    const insertValues = {
       title: input.title,
       categorySlug: input.categorySlug,
       description: input.description ?? null,
@@ -510,31 +524,36 @@ export const adRepository = {
       featured: false,
       pinned: false,
       pinnedAt: null,
-      createdAt: new Date(now),
-      updatedAt: new Date(now),
-      expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+      createdAt,
+      updatedAt,
+      expiresAt,
       rejectionReason: null,
       adminNotes: null,
-    };
+    } satisfies typeof products.$inferInsert;
 
-    const result = await db
-      .insert(products)
-      .values(adValues)
-      .returning();
+    // Product + images must commit together. Without a transaction a failing
+    // image insert leaves an ad row with no images behind.
+    const result = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(products)
+        .values(insertValues)
+        .returning();
 
-    // Store images in ad_images table (single source of truth)
-    if (images.length > 0) {
+      // Store images in ad_images table (single source of truth)
+      // Let DB generate UUIDs automatically — no "id" field passed
       const imageRecords = images.map((imgUrl, idx) => ({
-        adId: result[0].id,
+        adId: inserted[0].id,
         imageUrl: imgUrl,
         sortOrder: idx,
-        isPrimary: idx === 0,
+        isPrimary: idx === 0, // Only first image is primary
       }));
-      await db.insert(adImages).values(imageRecords);
-    }
 
-    console.log("[AD_CREATE] Stored ad:", result[0].id, "with", images.length, "images");
-    console.log("[AD_CREATE] Image URLs:", images);
+      await tx.insert(adImages).values(imageRecords);
+
+      return inserted;
+    });
+
+    console.log("[DB] ad created successfully, id:", result[0].id, "images:", images.length);
 
     const baseAd = mapRowToProduct(result[0]);
     const ad = await mapImagesToProduct(baseAd.id, baseAd);
@@ -549,8 +568,9 @@ export const adRepository = {
   },
 
   async update(id: string, patch: AdUpdateInput, actor: Actor): Promise<Product> {
+    const now = new Date();
     const updateSet: Record<string, any> = {
-      updatedAt: new Date(),
+      updatedAt: now,
     };
 
     if (patch.title !== undefined) updateSet.title = patch.title;
@@ -569,17 +589,24 @@ export const adRepository = {
       if (invalidImages.length > 0) {
         throw new Error("Invalid image URLs detected. Please re-upload your images.");
       }
+
       // Replace all images in ad_images table (single source of truth)
       await db
         .delete(adImages)
         .where(eq(adImages.adId, id));
+
+      // Insert new images — let DB generate UUIDs automatically, no "id" field passed
       if (patch.images.length > 0) {
         const imageRecords = patch.images.map((imgUrl: string, idx: number) => ({
           adId: id,
           imageUrl: imgUrl,
           sortOrder: idx,
-          isPrimary: idx === 0,
+          isPrimary: idx === 0, // Only first image is primary
         }));
+
+        console.log("[DB] updating images for ad:", id, "count:", patch.images.length);
+        console.log("[DB] image URLs:", patch.images);
+
         await db.insert(adImages).values(imageRecords);
       }
     }
@@ -648,10 +675,11 @@ export const adRepository = {
     validateTransition(existing[0].status, "rejected");
 
     // Transaction: update product + audit log + notification
+    const now = new Date();
     const result = await db.transaction(async (tx) => {
       const updateSet: Record<string, any> = {
         status: "rejected",
-        updatedAt: new Date(),
+        updatedAt: now,
         rejectionReason: reason ?? null,
       };
 
@@ -678,7 +706,7 @@ export const adRepository = {
           actorId: actor.id,
           actorName: actor.name,
           note: reason ?? null,
-          createdAt: new Date(),
+          createdAt: now,
         });
 
       return updatedAd;
@@ -761,11 +789,11 @@ export const adRepository = {
       throw new Error(`Cannot renew ad in "${existing[0].status}" status`);
     }
 
-    const expiresAt = new Date(Date.now() + days * 86_400_000).toISOString();
+    const expiresAt = new Date(Date.now() + days * 86_400_000);
 
     await db
       .update(products)
-      .set({ expiresAt: new Date(expiresAt), updatedAt: new Date() })
+      .set({ expiresAt, updatedAt: new Date() })
       .where(eq(products.id, id));
 
     const ad = await transitionWithImagesAndNotify(
@@ -796,19 +824,12 @@ export const adRepository = {
   },
 
   async setPinned(id: string, pinned: boolean, actor: Actor): Promise<Product> {
-    const result = await db
-      .select()
-      .from(products)
-      .where(eq(products.id, id))
-      .limit(1);
-
-    if (result.length === 0) throw new Error(`Ad ${id} not found`);
-
-    const pinnedAt = pinned ? new Date() : null;
+    const now = new Date();
+    const pinnedAt = pinned ? now : null;
 
     await db
       .update(products)
-      .set({ pinned, pinnedAt, updatedAt: new Date() })
+      .set({ pinned, pinnedAt, updatedAt: now })
       .where(eq(products.id, id));
 
 
@@ -831,17 +852,11 @@ export const adRepository = {
   },
 
   async setFeatured(id: string, featured: boolean, actor: Actor): Promise<Product> {
-    const result = await db
-      .select()
-      .from(products)
-      .where(eq(products.id, id))
-      .limit(1);
-
-    if (result.length === 0) throw new Error(`Ad ${id} not found`);
+    const now = new Date();
 
     await db
       .update(products)
-      .set({ featured, updatedAt: new Date() })
+      .set({ featured, updatedAt: now })
       .where(eq(products.id, id));
 
     const updated = await db
@@ -867,9 +882,25 @@ export const adRepository = {
 /* Internal helpers                                                         */
 /* ---------------------------------------------------------------------- */
 
+/** Convert a date-like value to ISO string. Handles Date objects, ISO strings, and null/undefined. */
+function toIsoString(val: Date | string | null | undefined): string | null {
+  if (val == null) return null;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") return val;
+  return String(val);
+}
+
+/** Convert a date-like value to a numeric timestamp. Handles Date objects, ISO strings, and null/undefined. */
+function toTimestamp(val: Date | string | null | undefined): number {
+  if (val == null) return 0;
+  if (val instanceof Date) return val.getTime();
+  if (typeof val === "string") return new Date(val).getTime();
+  return Number(val) || 0;
+}
+
 /** Map a Drizzle product row to the Product type. */
 function mapRowToProduct(row: typeof products.$inferSelect): Product {
-  const createdAtMs = row.createdAt?.getTime() ?? new Date().getTime();
+  const createdAtMs = toTimestamp(row.createdAt) || Date.now();
   const postedAgoHours = Math.floor((Date.now() - createdAtMs) / 3600000);
 
     return {
@@ -887,17 +918,17 @@ function mapRowToProduct(row: typeof products.$inferSelect): Product {
       ownerId: row.ownerId,
       featured: row.featured ?? false,
       pinned: row.pinned ?? false,
-      pinnedAt: row.pinnedAt != null ? row.pinnedAt.toISOString() : undefined,
-      createdAt: row.createdAt?.toISOString() ?? new Date().toISOString(),
-      updatedAt: row.updatedAt?.toISOString() ?? new Date().toISOString(),
-      expiresAt: row.expiresAt?.toISOString() ?? undefined,
+      pinnedAt: toIsoString(row.pinnedAt) ?? undefined,
+      createdAt: toIsoString(row.createdAt) ?? new Date().toISOString(),
+      updatedAt: toIsoString(row.updatedAt) ?? new Date().toISOString(),
+      expiresAt: toIsoString(row.expiresAt) ?? undefined,
       rejectionReason: row.rejectionReason ?? undefined,
       adminNotes: row.adminNotes ?? undefined,
       postedAgoHours,
       image: "",
       images: [],
     };
-}
+  }
 
 /** Transition with image mapping — used by approve, reject, hide, etc. */
 async function transitionWithImages(
@@ -906,14 +937,11 @@ async function transitionWithImages(
   actor: Actor,
   record: Omit<RecordInput, "actorId" | "actorName">,
 ): Promise<Product> {
-  const updateSet = {
-    status,
-    updatedAt: new Date(),
-  };
+  const updatedAt = new Date();
 
   await db
     .update(products)
-    .set(updateSet)
+    .set({ status, updatedAt })
     .where(eq(products.id, id));
 
   const result = await db
@@ -946,14 +974,11 @@ async function transitionWithImagesAndNotify(
   notifyAction: "approved" | "rejected",
   notifyReason?: string,
 ): Promise<Product> {
-  const updateSet = {
-    status,
-    updatedAt: new Date(),
-  };
+  const updatedAt = new Date();
 
   await db
     .update(products)
-    .set(updateSet)
+    .set({ status, updatedAt })
     .where(eq(products.id, id));
 
   const result = await db
@@ -983,14 +1008,11 @@ async function transition(
   actor: Actor,
   record: Omit<RecordInput, "actorId" | "actorName">,
 ): Promise<Product> {
-  const updateSet = {
-    status,
-    updatedAt: new Date(),
-  };
+  const updatedAt = new Date();
 
   await db
     .update(products)
-    .set(updateSet)
+    .set({ status, updatedAt })
     .where(eq(products.id, id));
 
   const result = await db

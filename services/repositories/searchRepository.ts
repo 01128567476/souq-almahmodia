@@ -544,13 +544,25 @@ export async function searchGlobalMixed(
 
   // Search users via DB (ILIKE on username/displayName)
   const userRows = await userRepository.getAllWithUsername();
+  // Helper: convert date-like to ISO string
+  const toIso = (val: Date | string | null | undefined): string | null => {
+    if (val == null) return null;
+    if (val instanceof Date) return val.toISOString();
+    return String(val);
+  };
+  const toIsoOrDef = (val: Date | string | null | undefined): string | undefined => {
+    if (val == null) return undefined;
+    if (val instanceof Date) return val.toISOString();
+    return String(val);
+  };
+
   const users: User[] = userRows.map((row) => ({
     id: row.id,
     displayName: row.displayName,
     username: row.username,
     usernameLower: row.usernameLower,
-    usernameLastChangedAt: row.usernameLastChangedAt?.toISOString() ?? null,
-    joinedAt: row.joinedAt.toISOString(),
+    usernameLastChangedAt: toIso(row.usernameLastChangedAt),
+    joinedAt: toIsoOrDef(row.joinedAt) ?? new Date().toISOString(),
     avatar: row.avatar ?? "",
     email: row.email,
     role: row.role as User["role"],

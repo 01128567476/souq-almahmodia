@@ -14,19 +14,25 @@ import { LogoutButton } from "@/components/auth/LogoutButton";
 
 export function Navbar() {
   const t = useTranslations();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, isLoading } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Stable identity so MobileNav's route-change effect doesn't re-fire every render.
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   // Browse is public; My Ads and Favorites become nav items once signed in.
+  // Admins get everything a user gets, plus a Dashboard link — /account is not
+  // admin-forbidden, so these hrefs are the same for both roles.
+  const isAdmin = user?.role === "admin";
   const navLinks = [
     { href: ROUTES.home, label: t("nav.browse") },
     ...(isAuthenticated
       ? [
           { href: ROUTES.accountAds, label: t("account.myAds") },
           { href: ROUTES.accountFavorites, label: t("account.favorites") },
+          ...(isAdmin
+            ? [{ href: ROUTES.dashboard, label: t("dashboard.title") }]
+            : []),
         ]
       : []),
   ];
@@ -87,7 +93,15 @@ export function Navbar() {
             </Link>
           </div>
           <div className="h-6 w-px bg-outline-variant mx-2 hidden lg:block" />
-          {isAuthenticated ? (
+          {isLoading ? (
+            // Session still loading. Rendering the signed-out buttons here would
+            // flash "login / register" at an already-signed-in admin, then swap
+            // to their real nav — the mismatch that made roles look wrong.
+            <div
+              aria-hidden
+              className="h-10 w-40 rounded-lg bg-surface-container-low animate-pulse"
+            />
+          ) : isAuthenticated ? (
             <div className="flex items-center gap-sm relative">
               <RoleSwitcher />
               <AccountMenu user={user} />
@@ -124,6 +138,7 @@ function AccountMenu({
 }) {
   const t = useTranslations();
   const [open, setOpen] = useState(false);
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="relative">
@@ -158,7 +173,8 @@ function AccountMenu({
           className="absolute end-0 mt-2 w-48 rounded-xl border border-outline-variant bg-surface-container-lowest p-sm shadow-xl"
         >
           <div className="flex flex-col">
-            {/* Profile */}
+            {/* Every signed-in user has a profile, admins included. The dashboard
+                is a separate nav link, not a replacement for this one. */}
             <Link
               href={ROUTES.account}
               role="menuitem"
@@ -168,6 +184,18 @@ function AccountMenu({
               <Icon name="person" size={20} />
               {t("account.profile")}
             </Link>
+
+            {isAdmin && (
+              <Link
+                href={ROUTES.dashboard}
+                role="menuitem"
+                className="flex items-center gap-md rounded-lg px-md py-sm font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container-low"
+                onClick={() => setOpen(false)}
+              >
+                <Icon name="shield" size={20} />
+                {t("dashboard.title")}
+              </Link>
+            )}
 
             {/* Divider */}
             <div className="my-xs h-px bg-outline-variant" />

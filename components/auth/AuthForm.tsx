@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/routing";
 import { ROUTES, requiredRoleFor, sanitizeNext } from "@/constants/routes";
+import { hasAtLeast } from "@/constants/roles";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/utils/cn";
 import { signIn } from "next-auth/react";
@@ -225,11 +226,16 @@ export function AuthForm({
         // Step 3: Redirect based on ACTUAL role from server
         setRedirecting(true);
 
-        if (sessionUser.role === "admin") {
-          window.location.href = `/${locale}/dashboard`;
-        } else {
-          window.location.href = `/${locale}/account`;
-        }
+        // Honour `?next=` when the freshly-known role can actually open it.
+        // Middleware sets that param when it bounces a signed-out visitor, so
+        // ignoring it here sent people to /account instead of the favourites or
+        // ad page they clicked. Falling back by role when `next` is off-limits
+        // keeps an under-privileged target from bouncing straight back to login.
+        const required = next ? requiredRoleFor(next) : null;
+        const canOpenNext = next !== null && (required === null || hasAtLeast(sessionUser.role, required));
+        const fallback = sessionUser.role === "admin" ? ROUTES.dashboard : ROUTES.account;
+
+        window.location.href = `/${locale}${canOpenNext ? next : fallback}`;
       }
     } catch (err: any) {
       // Check if user needs email verification (status 403)

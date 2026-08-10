@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/serverAuth";
 import { notificationRepository } from "@/services/repositories/notificationRepository";
 import type { AppNotification } from "@/types";
 import { parsePagination, buildPaginationMeta, type PaginatedResponse } from "@/lib/pagination";
+import { normalizeDate, safeDate } from "@/lib/dateUtils";
 
 /**
  * GET /api/notifications
@@ -41,11 +42,11 @@ export async function GET(request: Request) {
       type: row.type,
       title: row.title,
       body: row.message,
-      time: row.createdAt?.toISOString() ?? new Date().toISOString(),
+      time: safeDate(row.createdAt, { fallback: "now" })!,
       read: row.isRead ?? false,
       recipientId: row.recipientId,
       adId: row.adId,
-      createdAt: row.createdAt?.toISOString() ?? undefined,
+      createdAt: safeDate(row.createdAt, { fallback: "now" })!,
     }));
 
     const response: PaginatedResponse<AppNotification> = {

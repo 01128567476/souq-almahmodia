@@ -61,16 +61,26 @@ export function useFavorite(
         return res.json();
       })
       .then((data) => {
+        console.log("[FAVORITE] API response:", data);
         if (data?.success && data?.data) {
           // Sync with authoritative server response
           const serverCount = data.data.count ?? newCount;
           const serverFavorited = data.data.favorited ?? next;
+          console.log("[FAVORITE] Server state:", { serverFavorited, serverCount });
           onChange({
             viewerHasFavorited: serverFavorited,
             favorites: serverCount,
           });
         }
         // If response is unexpected, keep optimistic state
+      })
+      .catch((err) => {
+        console.error("[FAVORITE] Toggle error:", err);
+        // Revert on failure
+        onChange({
+          viewerHasFavorited: favorited,
+          favorites: count,
+        });
       })
       .catch(() => {
         // Revert on failure

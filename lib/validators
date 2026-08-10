@@ -191,10 +191,11 @@ export function validateDescription(value: unknown): string | undefined {
 }
 
 /**
- * Validate a price.  Must be a positive number (max 999999999).
+ * Validate a price.  Must be a positive number within the products.price
+ * numeric(12, 2) range (max 9999999999.99).
  */
 export function validatePrice(value: unknown): number {
-  return requireNumber(value, "Price", { min: 0, max: 999999999 });
+  return requireNumber(value, "Price", { min: 0, max: 9999999999.99 });
 }
 
 /**

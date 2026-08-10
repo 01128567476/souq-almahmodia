@@ -221,7 +221,17 @@ export function boundedNumber(
 }
 
 /**
- * Validate price (non-negative, max 2 decimal places).
+ * Maximum storable price.
+ *
+ * products.price is numeric(12, 2) — 12 significant digits total, 2 after the
+ * decimal point — so the largest representable value is 9999999999.99. Passing
+ * anything larger raises a Postgres "numeric field overflow" (22003) at insert
+ * time rather than a clean 400, so validate against this before hitting the DB.
+ */
+export const MAX_PRICE = 9_999_999_999.99;
+
+/**
+ * Validate price (non-negative, max 2 decimal places, within DB column range).
  */
 export function validatePrice(value: unknown): ValidationResult<number> {
   const num = requireNumber(value, "Price");
@@ -229,6 +239,12 @@ export function validatePrice(value: unknown): ValidationResult<number> {
 
   if (num.data! < 0) {
     return invalid<number>("Price cannot be negative");
+  }
+
+  if (num.data! > MAX_PRICE) {
+    return invalid<number>(
+      `Price cannot exceed ${MAX_PRICE.toLocaleString("en-US")}`
+    );
   }
 
   // Check decimal places

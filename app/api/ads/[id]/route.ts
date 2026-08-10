@@ -13,6 +13,7 @@ import { adRepository, type AdUpdateInput } from "@/services/repositories/adRepo
 import { getCurrentUser } from "@/lib/serverAuth";
 import { isAdmin } from "@/lib/permissions";
 import { deleteImagesFromCloudinary } from "@/lib/cloudinary";
+import { MAX_PRICE } from "@/lib/validation";
 
 export async function PATCH(
   request: Request,
@@ -31,7 +32,17 @@ export async function PATCH(
 
   if (typeof raw.title === "string") allowedPatch.title = raw.title;
   if (typeof raw.description === "string") allowedPatch.description = raw.description;
-  if (typeof raw.price === "number") allowedPatch.price = raw.price;
+  if (typeof raw.price === "number") {
+    // Reject out-of-range prices here: products.price is numeric(12,2), so a
+    // larger value would overflow the column and surface as a 500 from the DB.
+    if (!Number.isFinite(raw.price) || raw.price < 0 || raw.price > MAX_PRICE) {
+      return NextResponse.json(
+        { error: `Price must be between 0 and ${MAX_PRICE.toLocaleString("en-US")}` },
+        { status: 400 },
+      );
+    }
+    allowedPatch.price = raw.price;
+  }
   if (typeof raw.currency === "string") allowedPatch.currency = raw.currency;
   if (typeof raw.categorySlug === "string") allowedPatch.categorySlug = raw.categorySlug;
   if (typeof raw.condition === "string")

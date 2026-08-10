@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/serverAuth";
 import { isAdmin } from "@/lib/permissions";
 import type { AdStatus } from "@/types";
 import { parsePagination, buildPaginationMeta, type PaginatedResponse } from "@/lib/pagination";
+import { MAX_PRICE } from "@/lib/validation";
 
 /**
  * GET /api/ads
@@ -68,9 +69,12 @@ export async function POST(request: Request) {
     // Description: optional, no minimum length
     // (removed strict validation - user can leave description empty)
 
-    // Price: must be positive number
+    // Price: must be positive number within the DB numeric(12,2) range.
+    // Anything above MAX_PRICE overflows the column and fails at insert time.
     if (!body.price || typeof body.price !== "number" || body.price <= 0) {
       errors.push("Invalid price");
+    } else if (!Number.isFinite(body.price) || body.price > MAX_PRICE) {
+      errors.push(`Price cannot exceed ${MAX_PRICE.toLocaleString("en-US")}`);
     }
 
     // Currency: removed - always EGP automatically (no user input needed)

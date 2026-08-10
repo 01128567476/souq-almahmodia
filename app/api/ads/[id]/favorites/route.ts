@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db-server";
 import { favorites } from "@/drizzle/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, count } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/serverAuth";
 
 /* -------------------------------------------------------------------------- */
@@ -31,10 +31,11 @@ export async function GET(
     const viewerId = url.searchParams.get("viewerId");
 
     // Count favorites for this ad
-    const [{ count }] = await db
-      .select({ count: db.$count(favorites) })
+    const countResult = await db
+      .select({ count: count() })
       .from(favorites)
       .where(eq(favorites.adId, id));
+    const favoriteCount = Number(countResult[0]?.count ?? 0);
 
     // Check if viewer favorited
     let isFavorited = false;
@@ -47,7 +48,7 @@ export async function GET(
       isFavorited = existing.length > 0;
     }
 
-    return NextResponse.json({ success: true, data: { count: Number(count), isFavorited } });
+    return NextResponse.json({ success: true, data: { count: favoriteCount, isFavorited } });
   } catch {
     return NextResponse.json(
       { success: false, error: "Failed to fetch favorites" },
@@ -94,12 +95,13 @@ export async function POST(
           .where(and(eq(favorites.adId, adId), eq(favorites.userId, userId)));
 
         // Re-count
-        const [{ count }] = await tx
-          .select({ count: db.$count(favorites) })
+        const countResult = await tx
+          .select({ count: count() })
           .from(favorites)
           .where(eq(favorites.adId, adId));
+        const newCount = Number(countResult[0]?.count ?? 0);
 
-        return { favorited: false, count: Number(count) };
+        return { favorited: false, count: newCount };
       }
 
       // INSERT (ON CONFLICT DO NOTHING prevents duplicates on race)
@@ -109,12 +111,13 @@ export async function POST(
         .onConflictDoNothing();
 
       // Re-count
-      const [{ count }] = await tx
-        .select({ count: db.$count(favorites) })
+      const countResult = await tx
+        .select({ count: count() })
         .from(favorites)
         .where(eq(favorites.adId, adId));
+      const newCount = Number(countResult[0]?.count ?? 0);
 
-      return { favorited: true, count: Number(count) };
+      return { favorited: true, count: newCount };
     });
 
     return NextResponse.json({

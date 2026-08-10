@@ -23,8 +23,8 @@ import { userRepository } from "@/services/repositories/userRepository";
 import { normalizeSearchText } from "@/utils/search";
 import { SYNONYM_GROUPS, getSynonymMap } from "@/services/search/synonymDictionary";
 import { db } from "@/lib/db-server";
-import { products } from "@/drizzle/schema";
-import { eq, or, like, count, sql, and as drizzleAnd } from "drizzle-orm";
+import { products, adImages } from "@/drizzle/schema";
+import { eq, or, like, count, sql, and as drizzleAnd, inArray } from "drizzle-orm";
 
 /* ====================================================================== */
 /* Scoring constants                                                      */
@@ -520,6 +520,26 @@ export async function searchGlobalMixed(
   // DB-level search (scaler, paginated to first page)
   const dbAds = await searchProductsDb(query, { page: 1, limit: 100 });
 
+  // Load images for all matched ads in batch
+  const adIds = dbAds.map((ad) => ad.id);
+  const imageMap = new Map<string, string>();
+  if (adIds.length > 0) {
+    const imageRows = await db
+      .select({ adId: adImages.adId, imageUrl: adImages.imageUrl, isPrimary: adImages.isPrimary, sortOrder: adImages.sortOrder })
+      .from(adImages)
+      .where(inArray(adImages.adId, adIds));
+
+    // Sort each ad's images: primary first, then by sortOrder
+    imageRows.sort((a, b) => (a.isPrimary ? 0 : 1) - (b.isPrimary ? 0 : 1) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+    // Store primary image for each ad
+    for (const row of imageRows) {
+      if (!imageMap.has(row.adId)) {
+        imageMap.set(row.adId, row.imageUrl);
+      }
+    }
+  }
+
   // Score DB results using semantic groups (bounded set, not full table)
   const adResults: SearchResultAd[] = [];
   for (const ad of dbAds) {
@@ -531,7 +551,8 @@ export async function searchGlobalMixed(
         title: ad.title,
         price: ad.price,
         currency: ad.currency,
-        image: ad.image,
+        // Use batch-loaded image or fall back to ad.image
+        image: imageMap.get(ad.id) ?? ad.image,
         location: ad.location,
         sellerName: ad.sellerName,
         postedAgoHours: ad.postedAgoHours,
